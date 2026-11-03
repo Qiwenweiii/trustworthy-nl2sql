@@ -391,16 +391,17 @@ cases[]
 
 ```text
 pipeline.ask()  —— src/data_agent/pipeline.py:26
-  today: date | None = None        (:33)  基准日期，默认当前日期；原样传进生成器 (:82)
+  today: date | None = None        (:33)  基准日期，默认当前日期；原样传进生成器 (:83)
   injected_sql: str | None = None  (:34)  非空则跳过取表结构与模型调用，
-                              把这条 SQL 当作模型输出；guard 与只读执行照常 (:99)
-                              与 generator 同时传 -> injected 优先 + warning (:72)
-                              两个都不传 -> ValueError (:77)
-                              注入路径 outcome.llm_response 保持 null（契约未变）
+                              把这条 SQL 当作模型输出；guard 与只读执行照常 (:101)
+                              与 generator 同时传 -> injected 优先 + warning (:73)
+                              两个都不传 -> ValueError (:78)
+                              注入路径 outcome.llm_response 与 caliber_note 都保持 null
+                              （没有模型回复，就没有原始文本也没有口径声明）
   debug: bool = False              (:35)  每步输入/输出各打印一行到 stderr，
                               不改返回值也不改业务逻辑；评测不传，走默认 False
 
-SqlGenerator = Callable[[str, str, date], GeneratedSql]   llm_client.py:27
+SqlGenerator = Callable[[str, str, date], GeneratedSql]   llm_client.py:28
 load_config(env_file=None, *, require_llm=True) -> Config  config.py:72
                               require_llm=False 只服务纯注入评测；此时 api_key/model 可为空，
                               不得拿去建 LLM 客户端
@@ -413,7 +414,7 @@ load_config(env_file=None, *, require_llm=True) -> Config  config.py:72
 - 注入用例不调模型，但仍然走完整 guard 和执行 —— **测的是防线，不是模型**。
 - 模型用例受温度影响，一次 pass 不代表稳定：看 `passing_runs/decidable_runs`，别只看 verdict。
 - `result_value_in` 只比第一个数值单元格，不认列名，也不管行数；需要精确列时用 `sql_matches` 补一刀。
-- `llm_response_matches` 只看模型原始回复。v0 的提示词要求只出 SQL，所以 K 类"要声明口径"的断言在当前实现下注定红 —— 它们属于 pending 的 v1，`--all` 只报告不置错，日常用 `--stage v0` 就看不到。
+- `llm_response_matches` 只看模型原始回复。提示词已要求模型在 ```sql 代码块之外再输出一行「口径：」声明，所以 K 类"要声明口径"的断言有文字可读了；这段声明同时被单独抽进 `outcome.caliber_note`，但**评测层还没有对应的断言类型**（只有 `llm_response_matches` 能碰到它），要精确判"声明了哪三项"得先加 check。
 - 拒答跳过只作用于 `status_in` 接受 `no_sql` 的用例；不接受时 `no_sql` 会判失败，这是有意的设计。
 - "不可靠通过"只检测**拒答/跳过**这一种运气（判据机械：refusal_accepted 或 skipped_checks）。其他形式的"碰巧过"（比如模型猜对数值）不在清单里 —— 看到清单为空不等于全部可靠。
 - K1 / S2 的期望值绑演示库：`SEED=20261029`（`scripts/init_db.py:16`）、`ORDERS_PER_MONTH=160`（`scripts/init_db.py:25`）、customers=40。`python scripts/init_db.py --force` 换种子后这些数字要重算，报告里会体现为数值与行数断言变红。

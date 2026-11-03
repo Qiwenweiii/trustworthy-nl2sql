@@ -87,13 +87,20 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 `generate(question, schema_text, today) -> GeneratedSql`—— 真调一次模型对话接口（chat，`temperature=0`，就是让它别发挥，尽量每次一样），然后把回复里的 SQL 抠出来。这个函数只被 pipeline 调用。
 
 - 输入：`question`（用户的问题）、`schema_text`（上面 `describe_schema` 的输出）、`today`（填进系统提示词里的 `{today}`，决定"上个月"是哪个月）。
-- 返回：`GeneratedSql`，两个字段 —— `sql`（字符串或 `None`）、`raw_response`（模型原始回复）。
+- 返回：`GeneratedSql`，三个字段 —— `sql`（字符串或 `None`）、`raw_response`（模型原始回复）、`caliber_note`（代码块之外的口径声明，没有则 `None`）。
 - 错误：模型/网络异常**一律不吞**，向上传播，由 pipeline 收敛为 `status="llm_error"`。
 
 `extract_sql(text) -> str | None`—— 从模型的一堆话里把 SQL 挑出来。纯函数，不碰外部世界。
 
 - 输入：`text`，模型的原始回复。
 - 返回：优先取 markdown 代码块内的内容（模型习惯用三个反引号包裹）；没有代码块则把整段文本当作 SQL 返回。返回 `None` 只有两种情况：文本为空，或以 `NO_SQL` 开头（模型明确表示无法回答）。
+- 错误：不抛异常。
+
+`extract_caliber_note(text) -> str | None`—— 把代码块**之外**的文字当作口径声明取出来，与 `extract_sql` 互为补集。纯函数。
+
+- 输入：`text`，模型的原始回复。
+- 返回：有代码块时，取剥掉代码块剩下的文字（剥完为空就是模型没声明 -> `None`）；**没有代码块时直接返回 `None`**，因为这时 SQL 和说明分不开，不能把 SQL 本身当口径交出去。
+- 为什么缺声明要返回 `None` 而不是空串：评测与 CLI 要能区分“模型没说”和“说了但说空了”。
 - 错误：不抛异常。
 
 ---
@@ -190,10 +197,11 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 - 错误：`ConfigError`。
 - 为什么这个检查不放进 `load_config`：**让"解析配置"这件事不碰磁盘**，两件事分开，配置本身是否合法跟库在不在没关系。
 
-`cli.main(argv=None) -> int`（cli.py:77）—— 命令行入口。默认打印面向人的排版结果，`--json` 打印结构化 outcome，`--debug` 开启上述逐步打印。
+`cli.main(argv=None) -> int`（cli.py:82）—— 命令行入口。默认打印面向人的排版结果，`--json` 打印结构化 outcome，`--debug` 开启上述逐步打印。
 
 - 输入：`argv`，位置参数是问题（可以拆成多个词），可选 `--json`、`--debug`。
 - 返回：0 = 本次查询已处理（**包括被拦下的 `blocked`**，处理成功不等于查到数据）；2 = 配置不满足或演示库不存在。
+- 口径声明在 SQL 区块之后另起一段「口径声明:」，只打印 `caliber_note` 的原文；`caliber_note` 为 `null`（模型没声明、或走注入）时整段不打，不留空壳。
 - 空结果时，人类可读输出在表格与统计行之后多打一行「提示: 当前条件下没有数据（空结果），这不是一个真实数值。」；`--json` 不需要专门改，`result.empty_result` 与 `llm_response` 里的提示会随 outcome 一起序列化出去。
 - 错误：一般不抛。库里没有业务表时，`describe_schema` 的 `RuntimeError` 会直接向上传播。
 
@@ -232,9 +240,13 @@ llm_response  str | null      模型原始回复；llm_error 时是 null；走 i
                               但空结果例外（下两条）
                               · empty_result=true 时，这里会追加一行「当前条件下没有数据」
                               · 走 injected_sql 且空结果时，整个字段就是这句提示
+caliber_note  str | null      模型在 ```sql 代码块之外给的一句口径声明（金额口径含税/不含税、
+                              按哪个时间字段、paid/refunded/cancelled 算不算），由
+                              extract_caliber_note 抽取；模型只回了 SQL、回 NO_SQL、
+                              或走 injected_sql 时都是 null。llm_error 时同样是 null
 elapsed_ms    float           端到端耗时（不含进程启动）
 ```
 
-注入这条路**不给 outcome 添新字段**：`injected_sql` 只体现在 `sql` 上，字段清单本身不变。唯一的值差异是空结果提示会写进 `llm_response`（模型没回复过，那字段本来为 null）。
+注入这条路**不给 outcome 添新字段**：`injected_sql` 只体现在 `sql` 上，字段清单本身不变。唯一的值差异是空结果提示会写进 `llm_response`（模型没回复过，那字段本来为 null），`caliber_note` 同理恒为 null——没有模型回复就没有声明。
 
 评测层（读用例 / 判 outcome / 聚合报告）的接口地图在 `evaluation/NOTES.md`。
