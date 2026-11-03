@@ -18,10 +18,11 @@ REQUEST_TIMEOUT_S = 60.0
 
 @dataclass(frozen=True)
 class GeneratedSql:
-    """模型输出：抽取后的 SQL（可能为 None）与原始文本。"""
+    """模型输出：抽取后的 SQL（可能为 None）、原始文本与代码块外的口径声明。"""
 
     sql: str | None
     raw_response: str
+    caliber_note: str | None = None
 
 
 SqlGenerator = Callable[[str, str, date], GeneratedSql]
@@ -37,6 +38,16 @@ def extract_sql(text: str) -> str | None:
     if not candidate or candidate.upper().startswith("NO_SQL"):
         return None
     return candidate
+
+
+def extract_caliber_note(text: str) -> str | None:
+    """取 ```sql 代码块之外的文字作为口径声明；模型只回 SQL 时返回 None。"""
+    text = text or ""
+    outside_fence = _FENCE_RE.sub("", text)
+    if outside_fence == text:
+        # 没有代码块可切，SQL 与说明分不开，不能把 SQL 本身当成口径声明
+        return None
+    return outside_fence.strip() or None
 
 
 def build_generator(cfg: Config) -> SqlGenerator:
@@ -60,6 +71,10 @@ def build_generator(cfg: Config) -> SqlGenerator:
         )
         # print(f"LLM 回复: {response.choices[0].message.content!r}")
         raw = (response.choices[0].message.content or "").strip()
-        return GeneratedSql(sql=extract_sql(raw), raw_response=raw)
+        return GeneratedSql(
+            sql=extract_sql(raw),
+            raw_response=raw,
+            caliber_note=extract_caliber_note(raw),
+        )
 
     return generate

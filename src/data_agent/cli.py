@@ -53,6 +53,11 @@ def render(outcome: dict) -> str:
         lines.append("SQL:")
         lines.extend(f"  {line}" for line in outcome["sql"].splitlines())
 
+    caliber = outcome.get("caliber_note")
+    if caliber:
+        lines.append("口径声明:")
+        lines.extend(f"  {line}" for line in caliber.splitlines())
+
     if outcome["status"] == "blocked":
         violations = outcome["guard"]["violations"]
         lines.append(f"拦截规则 ({len(violations)} 条):")

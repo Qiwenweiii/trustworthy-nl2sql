@@ -56,6 +56,7 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | `result.elapsed_ms`  | float          | 数据库执行耗时                                                                                      |
 | `error`              | object \| null | `{"type": ..., "message": ...}`，见下表                                                             |
 | `llm_response`       | string \| null | 模型原始文本，便于评测诊断（如模型答非所问）；结果为空（`result.empty_result`）时末尾追加一行「当前条件下没有数据」 |
+| `caliber_note`       | string \| null | 模型在 SQL 代码块之外给的**口径声明**（含税/不含税、时间字段、退款与取消算不算），取自 `llm_response` 里代码块外的文字；模型没声明、或走 `injected_sql` 时为 null |
 | `elapsed_ms`         | float          | 端到端耗时（不含 CLI 启动）                                                                         |
 
 ### `pipeline.ask()` 的可选入参（评测用）
@@ -63,7 +64,7 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | 参数           | 默认     | 行为                                                                                                                                                                                                                                                          |
 | -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `today`        | 当前日期 | 基准日期，原样传进 SQL 生成器用于提示词里的“上个月”等相对时间；评测冻结为 `2026-10-30`，正常运行不传                                                                                                                                                          |
-| `injected_sql` | `None`   | 非空时跳过取 schema 与模型调用，把这条 SQL 当作模型输出；静态校验与只读执行照常进行（**注入不绕过 guard**），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
+| `injected_sql` | `None`   | 非空时跳过取 schema 与模型调用，把这条 SQL 当作模型输出；静态校验与只读执行照常进行（**注入不绕过 guard**），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示），`caliber_note` 同样保持 null（没有模型回复，就没有口径声明）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
 | `debug`        | `False`  | 为 `True` 时将链路每一步的输入/输出各打印一行到 **stderr**（格式见「debug 模式」）。仅影响打印，返回值字段与业务逻辑不变                                                                                     |
 
 `generator` 与 `injected_sql` 至少提供一个，否则抛 `ValueError`。生成器签名为 `Callable[[str, str, date], GeneratedSql]`（问题、schema 文本、基准日期）。
@@ -199,6 +200,6 @@ python -m evaluation.run_eval --all
 
 ## v0 已知边界
 
-- 不做口径澄清：“销售额”由提示词约定为 `SUM(orders.amount)`（含税），退款 / 取消订单是否计入由模型自行决定，SQL 会原样打印出来。
+- 口径只做声明、不做澄清：提示词要求模型在 SQL 代码块之外再输出一行口径声明（金额口径 / 时间口径 / 订单范围），落在 `caliber_note`；用户没说清时不反问，按默认（`SUM(orders.amount)`，含税）出数，但默认必须写进声明。声明与 SQL 是否真的相符（例如订单范围有没有落到 `status` 条件）仍靠模型自觉，没有指标定义表做校验。
 - 结果校验只做空结果标记：0 行或全 NULL 会标 `result.empty_result` 并在输出说「当前条件下没有数据」；负值、异常量级、NULL 比例等仍不告警。
 - SQL 生成质量取决于模型，v0 不保证准确率。

@@ -238,6 +238,59 @@ def test_nonempty_result_has_no_notice(demo_db):
     assert "当前条件下没有数据" not in outcome["llm_response"]
 
 
+def test_caliber_note_is_carried_into_outcome(demo_db):
+    """模型在 SQL 之外给的口径声明要原样进 outcome：评测读得到，CLI 也打得出来。"""
+
+    def generate(question: str, schema_text: str, today: date) -> GeneratedSql:
+        """返回带口径声明的模型输出。"""
+        sql = "SELECT count(*) AS n FROM orders WHERE amount > 0"
+        raw = f"```sql\n{sql}\n```\n口径：含税，按下单时间；只算已支付，退款与取消不计入。"
+        return GeneratedSql(
+            sql=sql,
+            raw_response=raw,
+            caliber_note="口径：含税，按下单时间；只算已支付，退款与取消不计入。",
+        )
+
+    outcome = ask("上个月销售额", generator=generate, db_path=demo_db)
+    assert outcome["status"] == "ok"
+    assert outcome["caliber_note"] == "口径：含税，按下单时间；只算已支付，退款与取消不计入。"
+    assert "含税" in outcome["llm_response"]
+
+
+def test_caliber_note_is_null_when_model_gives_only_sql(demo_db):
+    """模型只回 SQL 没声明口径时，caliber_note 是 null，评测能据此判定“没声明”。"""
+    outcome = ask(
+        "一共有多少订单",
+        generator=_stub("SELECT count(*) AS n FROM orders"),
+        db_path=demo_db,
+    )
+    assert outcome["status"] == "ok"
+    assert outcome["caliber_note"] is None
+
+
+def test_caliber_note_is_null_on_injected_path(demo_db):
+    """注入路径没有模型回复，口径声明字段保持 null，但字段本身必须在。"""
+    outcome = ask(
+        "一共有多少订单",
+        db_path=demo_db,
+        injected_sql="SELECT count(*) AS n FROM orders",
+    )
+    assert outcome["status"] == "ok"
+    assert "caliber_note" in outcome
+    assert outcome["caliber_note"] is None
+
+
+def test_caliber_note_survives_refusal(demo_db):
+    """拒答分支只输出 NO_SQL：没有口径声明，字段仍为 null 而不是缺失。"""
+    outcome = ask(
+        "今天天气怎么样",
+        generator=_stub(None, raw="NO_SQL"),
+        db_path=demo_db,
+    )
+    assert outcome["status"] == "no_sql"
+    assert outcome["caliber_note"] is None
+
+
 def test_today_is_passed_through_to_generator(demo_db):
     """ask(today=...) 原样传给生成器，用于评测冻结基准日期。"""
     seen = {}

@@ -50,6 +50,7 @@ def ask(
         "result": None,
         "error": None,
         "llm_response": None,
+        "caliber_note": None,
         "elapsed_ms": 0.0,
     }
 
@@ -86,6 +87,7 @@ def ask(
             trace("llm_error", f"{exc} | status={outcome['status']}")
             return finish()
         outcome["llm_response"] = generated.raw_response
+        outcome["caliber_note"] = generated.caliber_note
         sql = generated.sql
 
     outcome["sql"] = sql
