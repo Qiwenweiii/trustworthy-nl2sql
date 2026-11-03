@@ -1,4 +1,4 @@
-# NOTES：接口地图（v0）
+# NOTES：接口地图
 
 这份文档逐个函数说明三件事：**接受什么输入、返回什么结果、在什么情况下报什么错**。
 
@@ -36,8 +36,16 @@
 
 **两条内部路线**（`ask` 里的分支）
 
-- 给了 `injected_sql`：**不查表结构、不调模型**，直接使用传入的 SQL。但安全校验（guard）和只读执行一步都不少 —— **注入不是绕过校验的通道**。这时如果连 `generator` 也一起传入，`generator` 会被忽略，同时打一条 warning 日志 `generator ignored due to injected_sql`；结果里的 `llm_response` 保持 `null`（因为不存在模型回复）。
+- 给了 `injected_sql`：**不查表结构、不调模型**，直接使用传入的 SQL。但安全校验（guard）和只读执行一步都不少 —— **注入不是绕过校验的通道**。这时如果连 `generator` 也一起传入，`generator` 会被忽略，同时打一条 warning 日志 `generator ignored due to injected_sql`；结果里的 `llm_response` 保持 `null`（因为不存在模型回复）。**唯一例外**：执行出来是空结果时，`llm_response` 会被填成那句「当前条件下没有数据」提示（见下条）。
 - 没给 `injected_sql`：先 `describe_schema(db_path)` 读取表结构，再调 `generator(question, schema_text, 日期)`。这一步的模型调用失败（网络、鉴权等任何异常）不向外传播，收敛为 `status="llm_error"`。
+
+**执行后判空（`status="ok"` 分支里的一步）**
+
+SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形状**判断是不是"没数据"：0 行，或每行所有取值都是 NULL。判为空时把「当前条件下没有数据」追加到 `llm_response` 末尾（原来为 `null` 时就直接写这句）。三条约定：
+
+- **不重跑 SQL 去验证**，也不另发一条 `count(*)` 交叉核对——空结果就是空结果。
+- `count(*) = 0` 这类**合法的数值不算空**（只认 `None`），否则会把真实的"0 单"答案误标成没数据。
+- 这一步不新增 `status` 取值，`ok` 仍是 `ok`；标记写在 `result.empty_result`，见文末字段字典。
 
 **在什么情况下抛出异常（环境问题，不会变成 status）**
 
@@ -57,6 +65,7 @@
 [ask] sql: ...（模型没给 SQL 时是"无"）
 [ask] guard: passed=... violations=N 规则名(细节) ...
 [ask] exec: rows=... elapsed_ms=...（失败时给错误信息）
+[ask] exec: empty_result=True | 当前条件下没有数据（只在判为空时补这一行）
 [ask] outcome: status=...（只在提前收尾时多这一行）
 ```
 
@@ -124,11 +133,18 @@
 
 - 输入：`db_path`（用只读 URI 打开，写操作无效）、`sql`（**已通过安全校验的语句；安全校验不是它的职责**，它不判断这条 SQL 是否危险）、`max_rows`（在外层再套一层 `LIMIT`）、`timeout_s`（超时即中断）。
 - 开头先查库文件在不在，不在直接 `FileNotFoundError`。
-- 返回：`QueryResult(columns, rows, truncated, max_rows, elapsed_ms)`；`as_dict()`在上面这几个之外多给一个 `row_count = len(rows)`。
+- 返回：`QueryResult(columns, rows, truncated, max_rows, elapsed_ms)`；`as_dict()`在上面这几个之外多给两个派生键：`row_count = len(rows)` 与 `empty_result = is_result_empty(rows)`。注意 `empty_result` **不是** `QueryResult` 的字段，是序列化时算出来的。
 - 错误：
   - `QueryTimeout` —— 超时。pipeline 接住，变成 `status="timeout"`。
   - `sqlite3.Error` —— 表不存在、写操作被拒等。pipeline 接住，变成 `status="exec_error"`。
   - `FileNotFoundError` —— 库不存在。**pipeline 不收敛成 status，直接向上传播**。正常调用模型的链路走不到这里（读取表结构那步先报错）；只有走 `injected_sql` 跳过表结构时才可能从那里抛出。
+
+`is_result_empty(rows) -> bool`（executor.py:50）—— 判断这批结果行是不是"没数据"。纯函数，不碰数据库，被 `as_dict()` 和 pipeline 共用同一份判空语义。
+
+- 输入：`rows`，已转成 `{列名: 值}` 的行列表（即 `QueryResult.rows`）。
+- 返回：`True` = 空结果，两种形态——0 行，或每行的每个取值都是 `None`（SQL 的 NULL，聚合查询没匹配到行的典型样子）。其余一律 `False`。
+- **口径要说清**：只认 `None`。`0`、`0.0`、空串都算"查出来的值"，不判空——否则 `count(*) = 0` 这种正确答案会被误标成没数据。评测层的 `result_empty_or_null` 断言口径更宽（把 0 也当空），两者不是一套，别改错地方。
+- 错误：不抛异常。
 
 `_on_progress() -> int`—— SQLite 的"进度回调"（progress handler），本质是个心跳探针：数据库每执行一小段就回头问一次"该停了吗"。它比对时间戳，到点了返回 1 表示"中断"，否则返回 0 表示"继续"。
 
@@ -174,10 +190,11 @@
 - 错误：`ConfigError`。
 - 为什么这个检查不放进 `load_config`：**让"解析配置"这件事不碰磁盘**，两件事分开，配置本身是否合法跟库在不在没关系。
 
-`cli.main(argv=None) -> int`（cli.py:74）—— 命令行入口。默认打印面向人的排版结果，`--json` 打印结构化 outcome，`--debug` 开启上述逐步打印。
+`cli.main(argv=None) -> int`（cli.py:77）—— 命令行入口。默认打印面向人的排版结果，`--json` 打印结构化 outcome，`--debug` 开启上述逐步打印。
 
 - 输入：`argv`，位置参数是问题（可以拆成多个词），可选 `--json`、`--debug`。
 - 返回：0 = 本次查询已处理（**包括被拦下的 `blocked`**，处理成功不等于查到数据）；2 = 配置不满足或演示库不存在。
+- 空结果时，人类可读输出在表格与统计行之后多打一行「提示: 当前条件下没有数据（空结果），这不是一个真实数值。」；`--json` 不需要专门改，`result.empty_result` 与 `llm_response` 里的提示会随 outcome 一起序列化出去。
 - 错误：一般不抛。库里没有业务表时，`describe_schema` 的 `RuntimeError` 会直接向上传播。
 
 `init_db(db_path, force=False, today=None) -> dict` —— 建演示库并灌进样例数据。
@@ -205,14 +222,19 @@ result        dict | null     只有 status=ok 时非空
   columns     list[str]       列名
   rows        list[dict]      每行 {列名: 值}，SQL 里的 NULL 变成 None
   row_count   int             截断后的实际行数，不等于库里总行数
+  empty_result bool           true = 没数据（0 行，或每行所有取值都是 None）；只按本次
+                              结果形状判定，不重跑 SQL。count(*)=0 这类合法数值是 false
   truncated   bool            true = 撞到行数上限，后面还有行没返回
   max_rows    int             这次生效的上限
   elapsed_ms  float           数据库自己跑了多久
 error         dict | null     {type, message}；type = sql_error | timeout | llm_error
-llm_response  str | null      模型原始回复；llm_error 时是 null；走 injected_sql 时也恒为 null
+llm_response  str | null      模型原始回复；llm_error 时是 null；走 injected_sql 时为 null，
+                              但空结果例外（下两条）
+                              · empty_result=true 时，这里会追加一行「当前条件下没有数据」
+                              · 走 injected_sql 且空结果时，整个字段就是这句提示
 elapsed_ms    float           端到端耗时（不含进程启动）
 ```
 
-注入这条路**不给 outcome 添新字段**：`injected_sql` 只体现在 `sql` 上，契约本身不变。
+注入这条路**不给 outcome 添新字段**：`injected_sql` 只体现在 `sql` 上，字段清单本身不变。唯一的值差异是空结果提示会写进 `llm_response`（模型没回复过，那字段本来为 null）。
 
 评测层（读用例 / 判 outcome / 聚合报告）的接口地图在 `evaluation/NOTES.md`。
