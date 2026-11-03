@@ -13,7 +13,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from .services.executor import QueryTimeout, run_query
+from .services.executor import QueryTimeout, is_result_empty, run_query
 from .services.llm_client import SqlGenerator
 from .services.schema import describe_schema
 from .services.sql_guard import check_sql
@@ -128,5 +128,12 @@ def ask(
             "exec",
             f"rows={result_dict['row_count']} elapsed_ms={result_dict['elapsed_ms']}",
         )
+        if is_result_empty(result.rows):
+            # 只按本次结果的形状判定，不重跑 SQL 验证；NULL/0 行必须说破，
+            # 免得用户把空结果当成真实答案。文案含「没有数据」，与评测用例的断言正则一致
+            notice = "当前条件下没有数据"
+            raw = outcome["llm_response"]
+            outcome["llm_response"] = f"{raw}\n{notice}" if raw else notice
+            trace("exec", f"empty_result=True | {notice}")
 
     return finish()

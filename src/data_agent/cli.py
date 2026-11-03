@@ -63,7 +63,10 @@ def render(outcome: dict) -> str:
         lines.append("模型没有给出 SQL。原始回复:")
         lines.append(f"  {outcome['llm_response'] or '（空）'}")
     elif outcome["status"] == "ok" and outcome["result"] is not None:
-        lines.extend(_render_result(outcome["result"]))
+        result = outcome["result"]
+        lines.extend(_render_result(result))
+        if result.get("empty_result"):
+            lines.append("提示: 当前条件下没有数据（空结果），这不是一个真实数值。")
     elif outcome["error"]:
         lines.append(f"错误 ({outcome['error']['type']}): {outcome['error']['message']}")
 

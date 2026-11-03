@@ -40,10 +40,19 @@ class QueryResult:
             "columns": self.columns,
             "rows": self.rows,
             "row_count": len(self.rows),
+            "empty_result": is_result_empty(self.rows),
             "truncated": self.truncated,
             "max_rows": self.max_rows,
             "elapsed_ms": self.elapsed_ms,
         }
+
+
+def is_result_empty(rows: list[dict]) -> bool:
+    """按结果形状判空：0 行，或每行的每个取值都是 SQL NULL（聚合无匹配的典型形态）。
+
+    0 与空串是查出来的数值，不算空——否则会把合法的 0 答案误标成没数据。
+    """
+    return not rows or all(value is None for row in rows for value in row.values())
 
 
 def _authorizer(action: int, arg1, arg2, dbname, trigger) -> int:

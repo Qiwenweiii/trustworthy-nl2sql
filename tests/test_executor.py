@@ -77,3 +77,28 @@ def test_missing_db_raises(tmp_path):
     """库文件不存在时抛 FileNotFoundError。"""
     with pytest.raises(FileNotFoundError):
         run_query(tmp_path / "missing.db", "SELECT 1")
+
+
+def test_empty_result_flag_for_zero_rows_and_all_null_rows(demo_db):
+    """0 行、或每行只有 NULL（聚合无匹配的典型形态）都算空结果，要标 empty_result=True。"""
+    zero_rows = run_query(demo_db, "SELECT id FROM orders WHERE id = 999")
+    assert zero_rows.as_dict()["empty_result"] is True
+
+    all_null = run_query(demo_db, "SELECT sum(amount) AS total FROM orders WHERE id = 999")
+    assert all_null.rows == [{"total": None}]
+    assert all_null.as_dict()["empty_result"] is True
+
+    mixed_null_and_value = run_query(
+        demo_db, "SELECT sum(amount) AS total, count(*) AS n FROM orders WHERE id = 999"
+    )
+    assert mixed_null_and_value.as_dict()["empty_result"] is False
+
+
+def test_empty_result_flag_false_for_real_values_including_zero(demo_db):
+    """0 是查出来的数值不是"没数据"；count(*)=0 与非 NULL 金额都不标空。"""
+    count_zero = run_query(demo_db, "SELECT count(*) AS n FROM orders WHERE id = 999")
+    assert count_zero.rows == [{"n": 0}]
+    assert count_zero.as_dict()["empty_result"] is False
+
+    normal = run_query(demo_db, "SELECT id, amount FROM orders WHERE id = 1")
+    assert normal.as_dict()["empty_result"] is False

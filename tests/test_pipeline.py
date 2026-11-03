@@ -182,6 +182,62 @@ def test_injected_sql_logs_generator_ignored(demo_db, caplog):
     assert "generator ignored due to injected_sql" in caplog.text
 
 
+def test_empty_result_is_flagged_and_notified(demo_db):
+    """全 NULL / 0 行结果：result.empty_result=True，llm_response 保留原始回复并追加无数据提示。"""
+    outcome = ask(
+        "没有数据的月份销售额",
+        generator=_stub(
+            "SELECT sum(amount) AS total FROM orders WHERE customer_id = 99",
+            raw="```sql\nSELECT sum(amount) AS total FROM orders WHERE customer_id = 99\n```",
+        ),
+        db_path=demo_db,
+    )
+    assert outcome["status"] == "ok"
+    assert outcome["result"]["rows"] == [{"total": None}]
+    assert outcome["result"]["empty_result"] is True
+    assert outcome["llm_response"].startswith("```sql")
+    assert "当前条件下没有数据" in outcome["llm_response"]
+
+    zero_rows = ask(
+        "不存在的订单",
+        generator=_stub("SELECT id FROM orders WHERE id = 999"),
+        db_path=demo_db,
+    )
+    assert zero_rows["result"]["empty_result"] is True
+    assert "当前条件下没有数据" in zero_rows["llm_response"]
+
+
+def test_empty_result_notice_appended_on_injected_path(demo_db):
+    """注入路径本来 llm_response 为 null；空结果时提示要能出现在最终输出里。"""
+
+    def exploding_generator(question: str, schema_text: str, today: date) -> GeneratedSql:
+        """被调用就报错，用于证明注入路径跳过了 LLM。"""
+        raise AssertionError("生成器不应被调用")
+
+    outcome = ask(
+        "不存在的订单",
+        generator=exploding_generator,
+        db_path=demo_db,
+        injected_sql="SELECT sum(amount) AS total FROM orders WHERE id = 999",
+    )
+    assert outcome["status"] == "ok"
+    assert outcome["result"]["empty_result"] is True
+    assert outcome["llm_response"] == "当前条件下没有数据"
+
+
+def test_nonempty_result_has_no_notice(demo_db):
+    """有数据的正常结果：不标空、不追加提示，llm_response 保持模型原始回复。"""
+    outcome = ask(
+        "一共有多少订单",
+        generator=_stub("SELECT count(*) AS n FROM orders"),
+        db_path=demo_db,
+    )
+    assert outcome["status"] == "ok"
+    assert outcome["result"]["empty_result"] is False
+    assert outcome["llm_response"] == "```sql\nSELECT count(*) AS n FROM orders\n```"
+    assert "当前条件下没有数据" not in outcome["llm_response"]
+
+
 def test_today_is_passed_through_to_generator(demo_db):
     """ask(today=...) 原样传给生成器，用于评测冻结基准日期。"""
     seen = {}

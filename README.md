@@ -50,11 +50,12 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | `result.columns`     | string[]       | 结果列名                                                                                            |
 | `result.rows`        | object[]       | 结果行，已转成 `{列名: 值}`                                                                         |
 | `result.row_count`   | int            | 实际返回行数（截断后）                                                                              |
+| `result.empty_result`| bool           | 结果是否为"没数据"：0 行，或每行所有取值都是 SQL NULL；只按本次结果形状判定，不重跑 SQL。注意 `count(*)=0` 这类合法数值**不**算空 |
 | `result.truncated`   | bool           | 是否因行数上限被截断                                                                                |
 | `result.max_rows`    | int            | 本次使用的行数上限                                                                                  |
 | `result.elapsed_ms`  | float          | 数据库执行耗时                                                                                      |
 | `error`              | object \| null | `{"type": ..., "message": ...}`，见下表                                                             |
-| `llm_response`       | string \| null | 模型原始文本，便于评测诊断（如模型答非所问）                                                        |
+| `llm_response`       | string \| null | 模型原始文本，便于评测诊断（如模型答非所问）；结果为空（`result.empty_result`）时末尾追加一行「当前条件下没有数据」 |
 | `elapsed_ms`         | float          | 端到端耗时（不含 CLI 启动）                                                                         |
 
 ### `pipeline.ask()` 的可选入参（评测用）
@@ -62,7 +63,7 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | 参数           | 默认     | 行为                                                                                                                                                                                                                                                          |
 | -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `today`        | 当前日期 | 基准日期，原样传进 SQL 生成器用于提示词里的“上个月”等相对时间；评测冻结为 `2026-10-30`，正常运行不传                                                                                                                                                          |
-| `injected_sql` | `None`   | 非空时跳过取 schema 与模型调用，把这条 SQL 当作模型输出；静态校验与只读执行照常进行（**注入不绕过 guard**），`llm_response` 保持 null。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
+| `injected_sql` | `None`   | 非空时跳过取 schema 与模型调用，把这条 SQL 当作模型输出；静态校验与只读执行照常进行（**注入不绕过 guard**），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
 | `debug`        | `False`  | 为 `True` 时将链路每一步的输入/输出各打印一行到 **stderr**（格式见「debug 模式」）。仅影响打印，返回值字段与业务逻辑不变                                                                                     |
 
 `generator` 与 `injected_sql` 至少提供一个，否则抛 `ValueError`。生成器签名为 `Callable[[str, str, date], GeneratedSql]`（问题、schema 文本、基准日期）。
@@ -168,10 +169,16 @@ pytest -q
 # 日常：只跑当前阶段（v0 的 2 条注入用例，不调 LLM）
 python -m evaluation.run_eval --stage v0
 
+# 改完代码的增量验证：只跑受影响的用例，--ids 逗号分隔可单独评测多条，--repeats 1 控制模型调用次数
+# （带 --ids 时 --all 只是报告模式开关——runner 强制 --stage/--all 二选一——实际范围由 --ids 圈定，
+#  其余用例不会被执行、不会调模型）
+python -m evaluation.run_eval --all --ids E1,E2,E3 --repeats 1
+
 # 阶段验收时手动跑：全量差距报告（9 条真模型用例 × --repeats，默认 3 次 = 27 次调用）
 python -m evaluation.run_eval --all
 ```
 
+- 改完代码默认只做增量验证：跑本次修改功能相关 + 可能受影响的用例（`--ids` + `--repeats 1`）；全量评测（`--all` 不带 `--ids`）耗时长、模型调用开销大，由人自行决定何时跑，日常改动不自动执行。
 
 - 用例在 `problems/eval_cases.json`（11 条），期望值全部写在用例里；`evaluation/` 只负责读用例、跑、判、聚合，不内联期望值。
 - 判定只出三类：**通过** / **失败** / **不可判定**（LLM 故障、配置缺失、演示库数据窗口不满足用例前提）。失败不预设分类——不再有用例级 `failure_type` 和断言级 `on_fail`，等于不给失败提前找理由；根因（`root_cause`）与建议落点只作证据与处置提示。
@@ -193,5 +200,5 @@ python -m evaluation.run_eval --all
 ## v0 已知边界
 
 - 不做口径澄清：“销售额”由提示词约定为 `SUM(orders.amount)`（含税），退款 / 取消订单是否计入由模型自行决定，SQL 会原样打印出来。
-- 不做结果校验：空结果、负值、NULL 比例等不会被告警。
+- 结果校验只做空结果标记：0 行或全 NULL 会标 `result.empty_result` 并在输出说「当前条件下没有数据」；负值、异常量级、NULL 比例等仍不告警。
 - SQL 生成质量取决于模型，v0 不保证准确率。
