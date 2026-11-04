@@ -8,8 +8,8 @@
         "promise": "只读防线：静态 guard 拦截危险/非只读 SQL，blocked 一律不进执行层"
       },
       "v1": {
-        "status": "pending",
-        "promise": "可信层：口径声明/澄清、空结果标记、结果校验、语义拒答、SQL 生成质量"
+        "status": "done",
+        "promise": "可信层：口径声明（不含澄清）、空结果标记、语义拒答"
       }
     },
     "notes": [

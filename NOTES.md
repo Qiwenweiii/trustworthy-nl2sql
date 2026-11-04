@@ -17,7 +17,7 @@
 
 `ask(question, *, generator=None, db_path, max_rows=200, query_timeout_s=5.0, today=None, injected_sql=None, debug=False) -> dict`
 
-整条链路的唯一入口，评测也只调它。输入一个问题，它依次完成：读取库的表结构 -> 让大模型写成 SQL -> 按指标定义强制补齐订单范围条件（语义层，见 metrics 模块）-> 按库里字段的真实类型校验时间边界（语义层，见 time_boundary 模块）-> 对这条 SQL 做安全校验 -> 用只读连接执行 -> 把结果打包成一个字典返回。
+整条链路的唯一入口，评测也只调它。输入一个问题，它依次完成：先做一次语义层拒答判定（撑不住的问题直接拒答、不进模型，见「semantic_check」与「graph」两个模块）-> 读取库的表结构 -> 让大模型写成 SQL -> 按指标定义强制补齐订单范围条件（语义层，见 metrics 模块）-> 按库里字段的真实类型校验时间边界（语义层，见 time_boundary 模块）-> 对这条 SQL 做安全校验 -> 用只读连接执行 -> 把结果打包成一个字典返回。
 
 **输入**
 
@@ -37,7 +37,13 @@
 **两条内部路线**（`ask` 里的分支）
 
 - 给了 `injected_sql`：**不查表结构、不调模型**，直接使用传入的 SQL。但指标条件注入、时间边界校验、安全校验（guard）和只读执行一步都不少 —— **注入不是绕过校验的通道**。这时如果连 `generator` 也一起传入，`generator` 会被忽略，同时打一条 warning 日志 `generator ignored due to injected_sql`；结果里的 `llm_response` 保持 `null`（因为不存在模型回复）。**唯一例外**：执行出来是空结果时，`llm_response` 会被填成那句「当前条件下没有数据」提示（见下条）。
-- 没给 `injected_sql`：先 `describe_schema(db_path)` 读取表结构，再调 `generator(question, schema_text, 日期)`。这一步的模型调用失败（网络、鉴权等任何异常）不向外传播，收敛为 `status="llm_error"`。
+- 没给 `injected_sql`：**先跑语义拒答检查**（见下段），放行后才 `describe_schema(db_path)` 读取表结构，再调 `generator(question, schema_text, 日期)`。这一步的模型调用失败（网络、鉴权等任何异常）不向外传播，收敛为 `status="llm_error"`。
+
+**语义拒答（生成 SQL 之前的一步，语义层第三步·链路上唯一的岔路）**
+
+问题先交给 `graph.builder.run_semantic_gate(question)`，它跑一张只有两个节点、一条条件边的 LangGraph 图：`semantic_check` 节点调纯函数 `check_question(question)` 出判定，条件边按 `allowed` 路由——放行就直接 `END` 交回 `ask()`，拒答才进 `semantic_refuse` 节点。选在这里用图，是因为这是链路上第一次出现真正的岔路；前面几步和后面的生成/注入/时间修正/guard/执行都还是"所有 SQL 都过"的线性写法，一行没动，也不接 checkpointer（单次判定没有断点恢复需求）。
+
+拒答时 `ask()` 立刻收尾：`status="no_sql"`、`sql`/`guard`/`enforcement`/`time_fix`/`result`/`caliber_note` 全为 `null`，拒答文案写进 `llm_response`，缺口原因写进 `error`（`{"type": "semantic_refusal", "message": ...}`）。**没有新增任何 outcome 字段**，评测代码零改动；评测报告每次采样都把 `error` 原样记进 `cases[].runs[].error`，所以拒答原因在报告里看得见，`aggregate` 也用它把"系统机制拒答"从"模型自发拒答"里分出去（见 `evaluation/NOTES.md`）。走 `injected_sql` 时这一步整个跳过——那条通道的问题文本只是标签（S1 的"写一条 SQL，用 load_extension…"根本不是业务问题），拦它会误伤注入用例；SQL 层的两道语义检查不受影响，注入依旧没有绕过校验的特权。判定细节见「semantic_check」模块。
 
 **指标必需条件强制注入（guard 之前的一步，语义层第一步）**
 
@@ -69,12 +75,13 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 **什么时候正常返回、只改 `status`（业务失败）**
 
-`ok` / `blocked` / `no_sql` / `exec_error` / `timeout` / `llm_error`，六选一，含义见 README。
+`ok` / `blocked` / `no_sql` / `exec_error` / `timeout` / `llm_error`，六选一，含义见 README。注意 `no_sql` 现在有两个来源，靠 `error` 分辨：语义层拒答带 `error.type="semantic_refusal"`（模型一次都没调），模型自己回 NO_SQL 时 `error` 仍是 `null`。
 
 **debug 打开时的输出格式**（`trace()`，只写 stderr，`--json` 从 stdout 读到的 JSON 不受影响）
 
 ```text
 [ask] question: ...
+[ask] refuse: 通过 metric=销售额 dims=（无）（拒答时是 reason=<原因码> terms=<缺的词> metric=... | <完整拒答文案>；走注入时是"跳过（injected_sql）"）
 [ask] schema: ...（走注入时这行是"跳过（injected_sql）"）
 [ask] sql: ...（模型没给 SQL 时是"无"）
 [ask] metric: 指标=销售额 changed=True 缺少必需条件，系统补入 status = 'paid'（未匹配指标时是"未匹配指标，不注入"；SQL 为空时整行不打）
@@ -208,6 +215,42 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 ---
 
+## semantic_check — `services/semantic_check.py`
+
+`check_question(question, *, metrics=None, dimensions=None) -> dict`（semantic_check.py:234）—— 生成 SQL 之前的语义拒答判定。**纯函数**：只读问题文本和两份静态登记表，不调模型、不连数据库，所以能单测（`tests/test_semantic_check.py` 直接拿 `problems/eval_cases.json` 的 9 条非注入用例问题文本核对）。
+
+**输入**：`question` 用户问题；`metrics` / `dimensions` 只有测试会传（构造"某维度只对某指标可用"这类替身登记表），生产路径用模块级 `METRICS`（metrics.py:26）与 `DIMENSIONS`（semantic_check.py:30）。
+
+**返回**：判定字典，键固定这些——
+
+| 键 | 含义 |
+| --- | --- |
+| `allowed` | bool，True 才继续走生成 |
+| `reason_code` | `None` 或 `empty_question` / `missing_metric` / `missing_dimension` / `dimension_not_supported` / `unknown_qualifier` |
+| `metric` | 匹配到的指标名（可能为 `None`，与 `residues` 一起决定原因码） |
+| `matched_dimensions` / `unsupported_dimensions` | 命中的维度、以及命中但 `applies_to` 不含当前指标的维度 |
+| `residues` | `[{term, kind}]`，没被词表解释掉的缺口；`kind` = `dimension`（含"地区/省份/产品线"这类拆分指示词）或 `qualifier` |
+| `dimension_values` / `time_terms` / `ignored_fragments` | 三条放行规则各自放过了什么，留痕给 debug 用，不参与拒答 |
+| `message` | 拒答文案，点名缺哪个词 + 列出当前支持的指标与维度；放行时为 `None` |
+
+**判据是反向覆盖，不是正向匹配**：词表把问题"涂色"（最长优先），没被涂到的连续片段就是缺口。R3「上个月新客销售额」能正常匹配到指标「销售额」，所以只看"有没有匹配到指标"永远抓不到它——缺口在残片里。词表来源：指标别名（`METRICS`）、口径词 `CALIBER_ALIASES`（:66，来自销售额定义里已有的含税/不含税两种算法）、维度别名与枚举取值（`DIMENSIONS`）、时间表达 `TIME_PHRASES`/`TIME_PATTERNS`、业务对象与语法词 `ENTITY_NOUNS`（:70）/`GRAMMAR_WORDS`（:72）。
+
+**三条放行规则**（`_residue_runs` :155 之后逐段判，宁可放过不误杀）：残片等于某个已登记的枚举取值放过；残片与维度别名紧邻（`_touches_dimension` :176，"抖音渠道"里的"抖音"）当取值放过——取值合不合法属于下一步的"维度取值校验"，本步不管；整段残片的每个字都落在 `TIME_HINT_CHARS`（:96）里就当时间表达放过（`前三个月`、`过去半年`、`今年以来`）。收紧到"整段都像时间"而不是"沾一个时间字符就放"，否则「月度环比」会一起漏过去。单字残片（口语尾巴"怎么样"剩下的"样"）只进 `ignored_fragments`，不做拒答依据。
+
+**不抛异常**：判不出缺口就放行；唯一例外是空问题，返回 `allowed=False` + `empty_question`。
+
+`supported_dimensions(metric_name)`（:186）—— 某指标支持的维度清单，从 `DIMENSIONS` 按 `applies_to` 反查。**维度只有一张登记表**，`METRICS` 里不另存维度清单，所以加维度只改一处、不可能两处不一致；`tests/test_semantic_check.py` 还双向核对"登记的列必须存在于 `COLUMN_NOTES`""能当维度的列必须已登记"。
+
+## graph — `src/data_agent/graph/`
+
+只装"检查 → 放行/拒答"这一个岔路，别的一步都不在这里。
+
+- `SemanticGateState`（state.py:8）：`question` / `verdict` / `route` 三个键，每个键只有一个节点写。
+- `semantic_check_node`（nodes/gate_check.py:9）只写 `verdict`；`semantic_refuse_node`（nodes/gate_refuse.py:11）只写 `route="refuse"`，不重复拼文案，也不产 SQL。
+- `route_after_check(state)`（builder.py:24）是条件边路由，**纯函数**，只读 `state["verdict"]["allowed"]` 返回 `generate` / `refuse`。
+- `build_graph()`（builder.py:31，`lru_cache` 编译一次复用）：`START -> semantic_check ->（条件边）refuse 节点 / END`，`semantic_refuse -> END`。没有 checkpointer。
+- `run_semantic_gate(question) -> dict`（builder.py:46）是给 `pipeline.ask()` 用的唯一出口，返回图的最终状态；判定逻辑不在图里，在 `services/semantic_check.py`，所以单测不装 LangGraph 也能测判定本身。
+
 ## executor — `services/executor.py`
 
 `run_query(db_path, sql, *, max_rows=200, timeout_s=5.0) -> QueryResult`—— 三件事：只读执行、行数截断、超时中断。
@@ -296,7 +339,7 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 ```text
 question      str             原始问题
 status        str             ok | blocked | no_sql | exec_error | timeout | llm_error
-sql           str | null      送执行的 SQL；blocked 时是被拦下的原文；no_sql/llm_error 为 null
+sql           str | null      送执行的 SQL；blocked 时是被拦下的原文；no_sql（含语义层拒答）/llm_error 为 null
 guard         dict | null     {passed, violations}；no_sql/llm_error 时压根没校验 -> null
   rule        str             empty_sql | malformed_sql | multiple_statements
                               | not_select | forbidden_keyword | forbidden_function
@@ -327,8 +370,11 @@ result        dict | null     只有 status=ok 时非空
   truncated   bool            true = 撞到行数上限，后面还有行没返回
   max_rows    int             这次生效的上限
   elapsed_ms  float           数据库自己跑了多久
-error         dict | null     {type, message}；type = sql_error | timeout | llm_error
-llm_response  str | null      模型原始回复；llm_error 时是 null；走 injected_sql 时为 null，
+error         dict | null     {type, message}；type = semantic_refusal | sql_error | timeout | llm_error
+                              semantic_refusal = 语义层拒答（status 仍是 no_sql，但模型一次都没调），
+                              message 就是拒答文案，说清缺的是指标还是维度、缺哪个词
+llm_response  str | null      模型原始回复；语义层拒答时这里是系统写的拒答说明（与 error.message 同文）；
+                              llm_error 时是 null；走 injected_sql 时为 null，
                               但空结果例外（下两条）
                               · empty_result=true 时，这里会追加一行「当前条件下没有数据」
                               · 走 injected_sql 且空结果时，整个字段就是这句提示
@@ -342,3 +388,11 @@ elapsed_ms    float           端到端耗时（不含进程启动）
 注入这条路**不因注入本身给 outcome 添字段**：`injected_sql` 只体现在 `sql` 上。值差异只有两处：空结果提示会写进 `llm_response`（模型没回复就没有该字段内容，那字段本来为 null），`caliber_note` 同理恒为 null——没有模型回复就没有声明。另注意：注入的 SQL 同样要过语义层两道检查，缺订单范围条件照样会被补上并记进 `enforcement`、DATETIME 字段的闭区间上界照样会被改写并记进 `time_fix`——那是这两个字段的常规行为，不是注入路径的新字段。`time_fix` 是语义层第二步带来的常规字段（模型路径和注入路径都有），与注入无关。
 
 评测层（读用例 / 判 outcome / 聚合报告）的接口地图在 `evaluation/NOTES.md`。
+
+---
+
+## 阶段承诺（退出码拦什么）
+
+- **v1 于 2026-11-04 转 done，此后 v1 用例失败视为回归，需修复或显式降级并记录原因。**（转的时候 9 条 v1 用例 `--repeats 3` 全过；改状态前后各跑过一次 `--all --ids K1`：同一条被人为改坏的 K1 断言，v1=pending 时退出码 0、v1=done 时退出码 1。）
+- done/pending **只在 `--all` 模式参与退出码判定**；`--stage <阶段>` 模式是本阶段有失败就 1，跟状态无关。现在 done = v0 + v1，`problems/eval_cases.json` 的 `meta.stages` 是唯一数据源，改状态不用动代码。
+- `promise` 是展示文案，**以实际实现为准**：代码不读它，判分和退出码只看 `status`。v1 的文案已收窄成「口径声明（不含澄清）、空结果标记、语义拒答」——澄清没做、结果校验只做到空结果标记，所以不写进承诺；「SQL 生成质量」也没写，v0/v1 都不保证准确率。

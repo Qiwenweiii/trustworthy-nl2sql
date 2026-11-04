@@ -180,7 +180,9 @@ def run_cases(
             status = outcome.get("status")
             # 每次采样都留 guard 原样输出：通过的用例也要能回看是凭哪条规则过的；
             # enforcement 同样保留：SQL 里的订单范围条件是模型写的还是系统补的，报告要说得清；
-            # time_fix 同样保留：边界写法是模型写的还是系统按字段类型改的，报告也要说得清
+            # time_fix 同样保留：边界写法是模型写的还是系统按字段类型改的，报告也要说得清；
+            # error 同样保留：no_sql 是语义层机制拒答（type=semantic_refusal）还是模型自己拒的，
+            # aggregate 判"不可靠通过"就看这个字段
             run = {
                 "run": run_index,
                 "status": status,
@@ -188,9 +190,9 @@ def run_cases(
                 "guard": outcome.get("guard"),
                 "enforcement": outcome.get("enforcement"),
                 "time_fix": outcome.get("time_fix"),
+                "error": outcome.get("error"),
             }
             if status in ("llm_error", "runner_crash"):
-                run["environment"] = outcome.get("error")
                 record["runs"].append(run)
                 emit(case, outcome, run_index, total_runs, None)
                 continue
@@ -330,7 +332,7 @@ def _unreliable_pass_lines(report: dict) -> list[str]:
     items = report["unreliable_passes"]
     lines = [
         "-" * 72,
-        "拒答跳过的不可靠通过（现在过是运气，不是机制：v0 没有保证拒答发生的组件）",
+        "拒答跳过的不可靠通过（模型自发拒答、或断言被跳过；语义层机制拒答的 no_sql 不在此列）",
         "-" * 72,
         f"检测到 {len(items)} 条拒答跳过的不可靠通过",
     ]

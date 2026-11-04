@@ -66,7 +66,7 @@ def _model_case(case_id: str, *, months: list[str] | None = None) -> dict:
         "id": case_id,
         "stage": "v1",
         "category": "口径",
-        "question": f"模型用例 {case_id}",
+        "question": "上个月销售额是多少",
         "expected_status": "ok",
         "expected_behavior": "出数",
         "capability": "语义层",
@@ -151,6 +151,44 @@ def test_llm_error_emits_event_with_failed_none(demo_db) -> None:
     assert events[0]["status"] == "llm_error"
     assert events[0]["guard"] is None
     assert events[0]["failed_assertions"] is None
+
+
+def _refusal_case(case_id: str) -> dict:
+    """表里没有的维度：语义层在模型之前就拒答，全程 0 次模型调用。"""
+    case = _model_case(case_id)
+    case["category"] = "拒答"
+    case["question"] = "上个月华东地区的销售额是多少"
+    case["expected_status"] = "no_sql"
+    case["assertions"][0]["expect"] = ["no_sql"]
+    return case
+
+
+def test_refusal_run_record_keeps_error_type(demo_db) -> None:
+    """run 记录要带 error：报告得能分辨"系统机制拒的"和"模型自己拒的"。"""
+
+    def exploding(*args):
+        raise AssertionError("语义拒答不该调用模型")
+
+    records, _ = _collect([_refusal_case("R1")], demo_db, generator=exploding)
+
+    run = records[0]["runs"][0]
+    assert run["status"] == "no_sql"
+    assert run["error"]["type"] == "semantic_refusal"
+    assert "华东地区" in run["error"]["message"]
+
+
+def test_llm_error_run_record_keeps_error(demo_db) -> None:
+    """模型故障的报错也进同一个 error 键，不再另立 environment 键。"""
+
+    def broken(question: str, schema_text: str, today: date):
+        raise RuntimeError("网络断了")
+
+    records, _ = _collect([_model_case("C1")], demo_db, generator=broken)
+
+    run = records[0]["runs"][0]
+    assert run["status"] == "llm_error"
+    assert run["error"] == {"type": "llm_error", "message": "网络断了"}
+    assert "environment" not in run
 
 
 def test_precheck_skip_emits_single_skipped_event(demo_db) -> None:

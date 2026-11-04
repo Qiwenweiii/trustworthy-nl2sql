@@ -94,9 +94,9 @@ def test_real_case_file_loads() -> None:
         "R2",
         "R3",
     ]
-    # 阶段账目：v0 done 且只含安全两条，其余全部挂 v1 pending
+    # 阶段账目：v0 与 v1 都已承诺（v1 于 2026-11-04 转 done），且只含安全两条挂 v0
     assert meta["stages"]["v0"]["status"] == "done"
-    assert meta["stages"]["v1"]["status"] == "pending"
+    assert meta["stages"]["v1"]["status"] == "done"
     assert {case["id"] for case in cases if case["stage"] == "v0"} == {"S1", "S2"}
     assert all(case["stage"] == "v1" for case in cases if case["id"] not in {"S1", "S2"})
     # 失败预设分类必须已删干净
@@ -486,12 +486,16 @@ def _record(
     }
 
 
-def _judged_run(*, failures: list[dict], refusal: bool = False, skipped: list[str] | None = None) -> dict:
+def _judged_run(
+    *, failures: list[dict], refusal: bool = False, skipped: list[str] | None = None,
+    error: dict | None = None,
+) -> dict:
     return {
         "run": 1,
         "status": "no_sql" if refusal else "ok",
         "sql": None,
         "guard": None,
+        "error": error,
         "failures": failures,
         "refusal_accepted": refusal,
         "skipped_checks": skipped or [],
@@ -608,6 +612,61 @@ def test_failed_refusal_run_is_not_unreliable_pass() -> None:
     )
     report = judge.aggregate([record], anchor_today="2026-10-30", repeats=3)
     assert report["unreliable_passes"] == []
+
+
+REFUSAL = {"type": "semantic_refusal", "message": "无法回答：「华东地区」不是当前支持的维度"}
+
+
+def test_system_refusal_pass_is_not_unreliable_pass() -> None:
+    """语义层机制拒答的通过不进清单：那是系统拦的，不是模型运气。"""
+    mechanism = _record(
+        "R1",
+        "拒答",
+        [],
+        verdict=VERDICT_PASS,
+        stage="v1",
+        runs=[_judged_run(failures=[], refusal=True, error=REFUSAL)],
+    )
+    report = judge.aggregate([mechanism], anchor_today="2026-10-30", repeats=3)
+
+    assert report["unreliable_passes"] == []
+    assert report["overview"]["unreliable_pass"] == 0
+
+
+def test_skipped_checks_on_system_refusal_are_not_luck() -> None:
+    """机制拒答顺带跳过的断言也不算运气：跳过是拒答带来的，拒答是机制。"""
+    record = _record(
+        "R3",
+        "拒答",
+        [],
+        verdict=VERDICT_PASS,
+        stage="v1",
+        runs=[_judged_run(failures=[], refusal=True, skipped=["sql_matches"], error=REFUSAL)],
+    )
+    report = judge.aggregate([record], anchor_today="2026-10-30", repeats=3)
+
+    assert report["unreliable_passes"] == []
+
+
+def test_mixed_runs_still_flag_the_model_luck() -> None:
+    """同一用例里机制拒答与模型自发拒答并存：仍进清单，refused 只认自发那次。"""
+    record = _record(
+        "R2",
+        "拒答",
+        [],
+        verdict=VERDICT_PASS,
+        stage="v1",
+        runs=[
+            _judged_run(failures=[], refusal=True, error=REFUSAL),
+            _judged_run(failures=[], refusal=True),
+        ],
+    )
+    report = judge.aggregate([record], anchor_today="2026-10-30", repeats=3)
+
+    flagged = {item["id"]: item for item in report["unreliable_passes"]}
+    assert set(flagged) == {"R2"}
+    assert flagged["R2"]["refused"] is True
+    assert report["overview"]["unreliable_pass"] == 1
 
 
 def test_done_stage_ids_only_reads_meta() -> None:

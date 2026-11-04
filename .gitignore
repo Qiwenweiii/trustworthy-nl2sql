@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 data/*.db
 data/*.db-journal
+# 评测运行产物（最终快照另存 docs/eval_report_final.json）
+problems/eval_report.json

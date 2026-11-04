@@ -402,6 +402,22 @@ def done_stage_ids(stages: dict) -> list[str]:
     ]
 
 
+SEMANTIC_REFUSAL = "semantic_refusal"
+
+
+def _refused_by_system(run: dict) -> bool:
+    """这次 no_sql 是不是语义层在调用模型之前拦下的（拒答由机制保证，不靠模型自觉）。"""
+    error = run.get("error") or {}
+    return error.get("type") == SEMANTIC_REFUSAL
+
+
+def _is_lucky_pass(run: dict) -> bool:
+    """一次通过是不是"运气"：靠用例接受拒答过关，或有断言被跳过。机制拒答除外。"""
+    if run.get("failures") or _refused_by_system(run):
+        return False
+    return bool(run.get("refusal_accepted") or run.get("skipped_checks"))
+
+
 def aggregate(case_records: list[dict], *, anchor_today: str, repeats: int) -> dict:
     """把逐用例记录聚合成报告结构：总览、按阶段、失败按能力域分组、不可靠通过清单。"""
     verdicts = {record["verdict"] for record in case_records}
@@ -411,18 +427,13 @@ def aggregate(case_records: list[dict], *, anchor_today: str, repeats: int) -> d
         record for record in case_records if record["verdict"] == VERDICT_ENVIRONMENT
     ]
 
-    # 拒答导致的不可靠通过：通过的采样里存在"用例接受拒答且模型真拒答了"的
-    # v0 没有保证拒答发生的组件，这种通过是运气不是机制（R2 碰巧拒答即属此类）
+    # 不可靠通过：通过的采样里存在"用例接受拒答且真拒答了"或"断言被跳过"的。
+    # 语义层机制拒答（error.type=semantic_refusal）不算运气：拒答是系统在模型之前拦的，
+    # 每次都会发生，R1/R3 变绿走的是这条；只有模型自发拒答的 no_sql 才留在清单里。
     unreliable = [
         record
         for record in passed
-        if any(
-            not run.get("failures") and (
-                run.get("refusal_accepted") or run.get("skipped_checks")
-            )
-            for run in record["runs"]
-            if "failures" in run
-        )
+        if any(_is_lucky_pass(run) for run in record["runs"] if "failures" in run)
     ]
 
     by_stage: dict[str, dict] = {}
@@ -501,13 +512,13 @@ def aggregate(case_records: list[dict], *, anchor_today: str, repeats: int) -> d
                 "refused": any(
                     run.get("refusal_accepted")
                     for run in record["runs"]
-                    if "failures" in run and not run["failures"]
+                    if _is_lucky_pass(run)
                 ),
                 "skipped_checks": sorted(
                     {
                         check
                         for run in record["runs"]
-                        if "failures" in run and not run["failures"]
+                        if _is_lucky_pass(run)
                         for check in run.get("skipped_checks") or []
                     }
                 ),

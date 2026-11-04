@@ -1,6 +1,7 @@
-"""一次问数的编排：问题 -> 生成 SQL -> 指标必需条件强制注入 -> 时间边界校验 -> 静态校验 -> 只读执行。
+"""一次问数的编排：问题 -> 语义层拒答检查 -> 生成 SQL -> 指标必需条件强制注入 -> 时间边界校验 -> 静态校验 -> 只读执行。
 
-每一步都是显式入参、返回结构化结果的普通函数，后续接编排框架时可直接包成节点。
+除拒答检查那一段（检查通过/拒答的岔路在 graph/ 里用 LangGraph 装配）以外，
+每一步都是显式入参、返回结构化结果的普通函数。
 outcome 的字段是评测契约，见 README。
 """
 
@@ -13,6 +14,7 @@ import time
 from datetime import date
 from pathlib import Path
 
+from .graph.builder import run_semantic_gate
 from .services.executor import QueryTimeout, is_result_empty, run_query
 from .services.llm_client import SqlGenerator
 from .services.metrics import enforce_metric_filters
@@ -41,6 +43,10 @@ def ask(
     today 决定提示词里的基准日期；不传时用当前日期，评测时传入固定日期以可复现。
     injected_sql 非空时跳过取 schema 与模型调用，直接把这条 SQL 当作模型输出，
     后续指标条件注入、静态校验与只读执行照常进行（注入不绕过 guard）。
+    问题在调模型之前先过语义层拒答检查：指标或维度不在定义表里（撑不住的问题）
+    直接返回 status=no_sql、sql=None，拒答文案进 llm_response、缺口类型进
+    error["type"]="semantic_refusal"，模型一次都不调；injected_sql 走复放通道，
+    问题层检查跳过（那条通道的问题文本只是标签），SQL 层检查不受影响。
     模型产出的 SQL 在进入校验前先过语义层：指标定义要求的必需条件（订单范围）
     缺失会被代码补上、冲突会被改写，处理痕迹记在 outcome["enforcement"]；
     时间边界按库里字段的真实类型校验，DATETIME 字段的闭区间上界改成半开区间，
@@ -75,6 +81,26 @@ def ask(
         print(f"[ask] {label}: {text}", file=sys.stderr, flush=True)
 
     trace("question", question)
+
+    # 语义层拒答检查：链路上第一个真正的岔路，只有这一段用 LangGraph。
+    # 拒答发生在模型调用之前——不调模型、不出 SQL，后面的注入/时间修正/guard/执行都不进。
+    # injected_sql 是"SQL 由外部给定、问题文本只是标签"的离线复放通道，问题层检查跳过，
+    # SQL 层的两道语义检查照常（注入不享有绕过校验的特权）。
+    if injected_sql is None:
+        verdict = run_semantic_gate(question)["verdict"]
+        if not verdict["allowed"]:
+            message = verdict["message"]
+            outcome["status"] = "no_sql"
+            outcome["llm_response"] = message
+            outcome["error"] = {"type": "semantic_refusal", "message": message}
+            terms = "、".join(item["term"] for item in verdict["residues"]) or "（无）"
+            trace("refuse", f"reason={verdict['reason_code']} terms={terms} metric={verdict['metric']} | {message}")
+            trace("outcome", "status=no_sql")
+            return finish()
+        dims = "、".join(verdict["matched_dimensions"]) or "（无）"
+        trace("refuse", f"通过 metric={verdict['metric']} dims={dims}")
+    else:
+        trace("refuse", "跳过（injected_sql）")
 
     if injected_sql is not None:
         if generator is not None:

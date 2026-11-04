@@ -79,8 +79,14 @@ def render(outcome: dict) -> str:
             token = f" [{item['token']}]" if item.get("token") else ""
             lines.append(f"  - {item['rule']}: {item['detail']}{token}")
     elif outcome["status"] == "no_sql":
-        lines.append("模型没有给出 SQL。原始回复:")
-        lines.append(f"  {outcome['llm_response'] or '（空）'}")
+        error = outcome.get("error") or {}
+        if error.get("type") == "semantic_refusal":
+            # 两种 no_sql 要分得开：系统判定答不了（没调过模型），和模型自己回 NO_SQL
+            lines.append("系统拒答（未调用模型、未生成 SQL）:")
+            lines.append(f"  {error.get('message') or outcome['llm_response'] or '（空）'}")
+        else:
+            lines.append("模型没有给出 SQL。原始回复:")
+            lines.append(f"  {outcome['llm_response'] or '（空）'}")
     elif outcome["status"] == "ok" and outcome["result"] is not None:
         result = outcome["result"]
         lines.extend(_render_result(result))

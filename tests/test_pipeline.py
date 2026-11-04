@@ -67,7 +67,7 @@ def test_safe_query_end_to_end(demo_db):
 def test_dangerous_function_sql_is_blocked(demo_db):
     """评测第一条用例：模型被诱导调用危险函数，必须被拦且不触碰数据。"""
     dangerous = "SELECT load_extension('/tmp/evil.so')"
-    outcome = ask("加载扩展", generator=_stub(dangerous), db_path=demo_db)
+    outcome = ask("订单明细有哪些", generator=_stub(dangerous), db_path=demo_db)
 
     assert outcome["status"] == "blocked"
     assert outcome["guard"]["passed"] is False
@@ -85,7 +85,7 @@ def test_dangerous_function_sql_is_blocked(demo_db):
 def test_delete_sql_is_blocked(demo_db):
     """DELETE 语句被拦，且订单数据不变。"""
     outcome = ask(
-        "删除所有订单",
+        "订单明细有哪些",
         generator=_stub("DELETE FROM orders"),
         db_path=demo_db,
     )
@@ -103,7 +103,7 @@ def test_delete_sql_is_blocked(demo_db):
 def test_no_sql_from_model(demo_db):
     """模型回复 NO_SQL 时状态为 no_sql。"""
     outcome = ask(
-        "今天天气怎么样",
+        "订单明细有哪些",
         generator=_stub(None, raw="NO_SQL"),
         db_path=demo_db,
     )
@@ -117,7 +117,7 @@ def test_no_sql_from_model(demo_db):
 def test_sql_execution_error_is_reported(demo_db):
     """表不存在时返回 exec_error 和原始报错。"""
     outcome = ask(
-        "查一张不存在的表",
+        "订单明细有哪些",
         generator=_stub("SELECT * FROM missing_table"),
         db_path=demo_db,
     )
@@ -133,7 +133,7 @@ def test_llm_failure_is_reported(demo_db):
         """模拟 LLM 连接失败的生成器。"""
         raise RuntimeError("connection refused")
 
-    outcome = ask("随便问问", generator=broken_generator, db_path=demo_db)
+    outcome = ask("订单明细有哪些", generator=broken_generator, db_path=demo_db)
     assert outcome["status"] == "llm_error"
     assert outcome["guard"] is None
     assert outcome["error"] == {"type": "llm_error", "message": "connection refused"}
@@ -190,7 +190,7 @@ def test_injected_sql_logs_generator_ignored(demo_db, caplog):
 def test_empty_result_is_flagged_and_notified(demo_db):
     """全 NULL / 0 行结果：result.empty_result=True，llm_response 保留原始回复并追加无数据提示。"""
     outcome = ask(
-        "没有数据的月份销售额",
+        "订单明细有哪些",
         generator=_stub(
             "SELECT sum(amount) AS total FROM orders WHERE customer_id = 99",
             raw="```sql\nSELECT sum(amount) AS total FROM orders WHERE customer_id = 99\n```",
@@ -204,7 +204,7 @@ def test_empty_result_is_flagged_and_notified(demo_db):
     assert "当前条件下没有数据" in outcome["llm_response"]
 
     zero_rows = ask(
-        "不存在的订单",
+        "订单明细有哪些",
         generator=_stub("SELECT id FROM orders WHERE id = 999"),
         db_path=demo_db,
     )
@@ -288,7 +288,7 @@ def test_caliber_note_is_null_on_injected_path(demo_db):
 def test_caliber_note_survives_refusal(demo_db):
     """拒答分支只输出 NO_SQL：没有口径声明，字段仍为 null 而不是缺失。"""
     outcome = ask(
-        "今天天气怎么样",
+        "订单明细有哪些",
         generator=_stub(None, raw="NO_SQL"),
         db_path=demo_db,
     )
@@ -326,7 +326,7 @@ def test_today_defaults_to_current_date(demo_db, monkeypatch):
 def test_generator_required_when_no_injected_sql(demo_db):
     """既不给生成器也不给注入 SQL 属于调用方写错，直接抛 ValueError。"""
     with pytest.raises(ValueError, match="至少提供一个"):
-        ask("随便问问", db_path=demo_db)
+        ask("订单明细有哪些", db_path=demo_db)
 
 
 def test_missing_order_scope_is_injected_and_recorded(demo_db):
@@ -408,7 +408,7 @@ def test_enforcement_runs_before_guard(demo_db):
 
 def test_no_sql_carries_null_enforcement(demo_db):
     """拒答路径没有 SQL，也就没有注入：字段存在但为 null。"""
-    outcome = ask("今天天气怎么样", generator=_stub(None, raw="NO_SQL"), db_path=demo_db)
+    outcome = ask("订单明细有哪些", generator=_stub(None, raw="NO_SQL"), db_path=demo_db)
     assert outcome["status"] == "no_sql"
     assert "enforcement" in outcome
     assert outcome["enforcement"] is None

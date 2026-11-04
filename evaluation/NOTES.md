@@ -40,10 +40,10 @@
 
 **阶段规则（为什么这样判就够用）**：
 
-- 用例各归各的阶段（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（done，S1/S2 注入用例），v1 = 可信层（pending，口径/空结果/拒答 9 条）。
+- 用例各归各的阶段（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（done，S1/S2 注入用例），v1 = 可信层（done，2026-11-04 转的，口径/空结果/拒答 9 条）。
 - `--stage v0` 是日常模式：只跑该阶段用例，报告只出这阶段的结果，干净、直接。
 - `--all` 是验收模式：跑所有阶段，出"距离完整规范还差什么"的差距报告，只在阶段验收时手动跑，不进日常流程。
-- **退出码只看 done 阶段的失败**（`compute_exit_code`，run_eval.py:426；done 清单来自 `judge.done_stage_ids`，judge.py:396）。规则数据化在 `meta.stages.status` 里 —— v1 做完把它转成 `done`，退出码自动开始拦 v1，**不用回头改代码**。
+- **退出码只看 done 阶段的失败**（`compute_exit_code`，run_eval.py:428；done 清单来自 `judge.done_stage_ids`，judge.py:396）。规则数据化在 `meta.stages.status` 里 —— v1 已于 2026-11-04 转成 `done`（done = v0 + v1），**代码一行没改**。判别性对照：同一条被人为改坏的 K1 断言，`--all --ids K1` 在 v1=pending 时退出码 0、转 done 后同样的跑法退出码 1。
 - 失败不分类，但每条断言仍带 `root_cause`（聚合分组键）+ `why`（为什么算问题）+ `landing`（建议落点，如"等 v1：口径澄清层"）。这三样是证据和处置提示，不参与判分。
 
 ---
@@ -132,7 +132,7 @@ result_value_in 缺 values / tolerance / 容差模式非法（_validate_value_ex
 
 从 `meta.stages` 挑出 `status == "done"` 的阶段名。唯一的消费方是 `compute_exit_code`（§4.7）—— 这就是"v1 转 done 不用改代码"的落点。
 
-### 2.6 `aggregate(case_records, *, anchor_today, repeats) -> dict`（:405）
+### 2.6 `aggregate(case_records, *, anchor_today, repeats) -> dict`（:421）
 
 把逐用例记录汇总成一份报告结构。四个维度：总览、按阶段、失败按（类别, root_cause）、不可靠通过清单。
 
@@ -142,7 +142,8 @@ result_value_in 缺 values / tolerance / 容差模式非法（_validate_value_ex
 - 四条语义：
   - **不可判定用例不进失败分组**，只进 `overview.environment` 和 `by_stage.environment`。环境故障不是靶子的错。
   - 失败断言按 `(category, root_cause)` 分组：跨用例同根因只算一组，`cases`、`whys`、`landings` 按字符串去重，`evidence` 逐条保留（含 check/expect/observed/outcome_status），组内按 root_cause 字符串排序。
-  - **不可靠通过（:416）**：用例判 pass，且任一已判定采样"零失败 +（refusal_accepted 或被跳过名单命中）"。判据是机械的（看本次通过到底靠什么拿到），不是用例里声明的。R2 碰巧自发拒答属于此类——它没有断言被跳过，靠 `refusal_accepted` 识别。
+  - **不可靠通过（:433）**：用例判 pass，且任一已判定采样"零失败 +（refusal_accepted 或被跳过名单命中）"。判据是机械的（看本次通过到底靠什么拿到），不是用例里声明的。
+    **语义层机制拒答除外**（`_is_lucky_pass` :414 → `_refused_by_system` :408，认 `run["error"]["type"] == "semantic_refusal"`，常量 `SEMANTIC_REFUSAL` :405）：这种 no_sql 是系统在调用模型之前拦的，每次都发生，属于机制不属于运气，连它顺带跳过的断言也不计进清单。模型自发拒答的 no_sql（error 为 null 或别的 type）仍是运气，R2 那类靠 `refusal_accepted` 识别。
   - `by_stage` 按阶段名排序，每个阶段统计 total/pass/fail/environment。
 
 ---
@@ -225,8 +226,8 @@ _within_tolerance(:233)   absolute 比 |v-allowed|<=amount；relative 比 |v-all
 ```text
 [{
   id, stage, category, question, expected_status, expected_behavior, injected,
-  runs: [{ run, status, sql, guard, enforcement, time_fix,  <- guard/enforcement/time_fix 每次采样都原样记录（见下）
-           environment?, failures?, passed_assertions?,
+  runs: [{ run, status, sql, guard, enforcement, time_fix, error,  <- 这六项每次采样都原样记录（见下）
+           failures?, passed_assertions?,
            refusal_accepted?, skipped_checks? }],      <- 后两者供 aggregate 识别不可靠通过
   failures: [...],                                     <- 跨采样按断言 index 去重
   decidable_runs, passing_runs,
@@ -237,7 +238,8 @@ _within_tolerance(:233)   absolute 比 |v-allowed|<=amount；relative 比 |v-all
 - `guard` 恒有键：放行是 `{"passed": true, "violations": []}`，拦截带全量 violations，`no_sql / llm_error / runner_crash` 为 null。**通过的用例也要能回看凭哪条规则过的**，不然分不清"拦对了理由"和"碰巧被别的规则拦了"。
 - `enforcement` 同样每次采样都记录（语义层注入痕迹，形状见根目录 NOTES 的 outcome 字段字典）：`sql_matches status` 这类断言变绿时，报告要能回答"订单范围条件是模型自己写的，还是系统补进/改写的"（`changed` 与 `actions[].type`）；问题没匹配到指标时为 null。
 - `time_fix` 同样每次采样都记录（语义层第二步·时间边界校验的痕迹，形状见根目录 NOTES）：边界断言变绿时，报告要能回答"这个边界是模型自己写对的，还是系统按字段类型改的"（`changed` 与 `actions[].type`）；SQL 里没有可识别的时间边界时为 null。K1 的根因就靠这个字段自证：`actions[].type=boundary_rewritten`，`to` 是 `< '下月第一天'`。
-- `skipped_checks`（:209）只出现在已判定的采样里：这次通过若靠"拒答 + 跳过名单"拿到，aggregate 认得出来。
+- `error`（:193）同样每次采样都记录：这次为什么没出数，只有一个机器可读来源——`semantic_refusal`（语义层在模型之前拒答，`message` 是拒答文案）/ `llm_error` / `sql_error` / `timeout` / runner 崩溃时的异常类名；正常出数或被 guard 拦下时为 null。原先 `llm_error` 的报错单独塞在 `environment` 键里，现在统一到 `error`，报告读一个字段就够。
+- `skipped_checks`（:211）只出现在已判定的采样里：这次通过若靠"拒答 + 跳过名单"拿到，aggregate 认得出来。
 - 五条规则:
   - 采样次数见上（`_total_runs`）。
   - `llm_error` / `runner_crash` 那几次**不进判定，也不进 passing/decidable 的分母**。环境故障既不算靶子答错，也不算答对。
@@ -250,27 +252,27 @@ _within_tolerance(:233)   absolute 比 |v-allowed|<=amount；relative 比 |v-all
 ### 4.5 校验行与进度行
 
 ```text
-_guard_brief(guard)      (:230)  一行说清放行还是拦截，拦截列出 rule[token]
-_guard_lines(record)     (:240)  逐用例的校验行：各次采样结论一致合成一行并标
+_guard_brief(guard)      (:232)  一行说清放行还是拦截，拦截列出 rule[token]
+_guard_lines(record)     (:242)  逐用例的校验行：各次采样结论一致合成一行并标
                                  "（N 次采样一致）"，不一致才按 run 展开
-_progress_line(event)    (:253)  一次采样/一次跳过压成一行进度文本
-make_progress_writer(stream) (:275)  进度回调：逐行 flush 写到调用方给的流
+_progress_line(event)    (:255)  一次采样/一次跳过压成一行进度文本
+make_progress_writer(stream) (:277)  进度回调：逐行 flush 写到调用方给的流
 ```
 
 进度约定三条：**只写 stderr**（stdout 留给报告，重定向/管道不串味）；**每完成一次采样打一行**，格式 `[序号/计划总数] 用例 [类别] run k/n 注入|模型 -> status=… 耗时 …s 失败断言 … | 校验一行`；**开跑前先打一条预估**（来自 `plan_summary`，含模型调用次数与单次最长超时提示）。预估行带范围前缀（`阶段 v0` 或 `全量模式`）。模型用例串行跑、单次调用上限 60s（`llm_client.py:16`），全量 27 次调用时控制台空着会像卡死——进度行就是治这个的。
 
-### 4.6 `render_text(report, *, cases_path, db_path, model, used_llm, exit_code) -> str`（:348）
+### 4.6 `render_text(report, *, cases_path, db_path, model, used_llm, exit_code) -> str`（:350）
 
 把聚合结果渲染成分区文本报告，**两套抬头按 `run_context.mode` 切换**：
 
 - `stage` 模式：`Data Agent 阶段评测报告 —— 阶段 v0（status=done）`，只出本阶段结果。
-- `all` 模式：`Data Agent 全量差距报告 —— 距离完整规范还差什么`，多两段：逐阶段计数行（`v0（done） 共 2 条：通过 2，失败 0，不可判定 0`）和"拒答跳过的不可靠通过"分区（`_unreliable_pass_lines`，:328）。
+- `all` 模式：`Data Agent 全量差距报告 —— 距离完整规范还差什么`，多两段：逐阶段计数行（`v0（done） 共 2 条：通过 2，失败 0，不可判定 0`）和"拒答跳过的不可靠通过"分区（`_unreliable_pass_lines`，:330）。
 
 固定内容：
 
 - 概览行固定是 **通过 X / 失败 Y / 不可判定 Z（共 N 条）**，下一行固定 **检测到 N 条拒答跳过的不可靠通过**。第二行措辞刻意只声明"检测到的这一类"，不写"不可靠通过共 N 条"——避免读者以为没标的就是可靠的。
-- 失败分区 `_failure_group_lines`（:293）：`● 类别 → ■ root_cause` 两层，每组渲染 `evidence` 前 4 条、`whys` 与 `landings` 全量。用例里写了"同上"就照原样输出，不做展开。两套模式共用。
-- 逐用例明细行 `{id} [阶段/类别] {✅ 通过|❌ 失败|⚠️ 不可判定} 注入|真模型 通过重复 r/n | 期望 status=…`（符号在 `_verdict_label`，:284；结论列不做定宽对齐——emoji 字符宽度不定，pad 了反而错位）；失败行末尾带 `｜根因 xxx`。
+- 失败分区 `_failure_group_lines`（:295）：`● 类别 → ■ root_cause` 两层，每组渲染 `evidence` 前 4 条、`whys` 与 `landings` 全量。用例里写了"同上"就照原样输出，不做展开。两套模式共用。
+- 逐用例明细行 `{id} [阶段/类别] {✅ 通过|❌ 失败|⚠️ 不可判定} 注入|真模型 通过重复 r/n | 期望 status=…`（符号在 `_verdict_label`，:286；结论列不做定宽对齐——emoji 字符宽度不定，pad 了反而错位）；失败行末尾带 `｜根因 xxx`。
 - 明细里固定有一行 `校验: …`（`_guard_lines` 生成，见 §4.5）：**通过的用例也打印拦因或放行原因**，用来区分"拦对了理由"和"碰巧过"。
 
 ### 4.7 `main(argv=None) -> int`（:445）与 `compute_exit_code(report) -> int`（:426）
@@ -298,8 +300,10 @@ CLI   --cases    默认 problems/eval_cases.json
 
 退出码  compute_exit_code 是纯函数，判别性测试直接打它：
         all 模式   gating 只看 done_stage_ids(meta.stages) ∩ 失败用例；
-                   pending 阶段失败仅报告、不置错（v1 转 done 后自动开始拦，不改代码）
-        stage 模式 本阶段 overview.fail > 0 即 1
+                   pending 阶段失败仅报告、不置错。done 现在是 [v0, v1]，
+                   任一条阶段的失败都会把 --all 置成 1
+        stage 模式 本阶段 overview.fail > 0 即 1，**不看 done/pending**
+                   （所以 --stage v1 的退出码证明不了状态位生效，要验只能看 --all）
         之后 environment > 0 -> 2；否则 0
         （--strict 已随失败分类一起删除——没有"未实现"分类了，这个开关无事可做）
 
@@ -319,7 +323,7 @@ overview
   repeats         int    CLI --repeats 的值（不是用例实际采样了几次）
   cases           int    本批用例条数（含不可判定）
   pass / fail / environment  int
-  unreliable_pass int    拒答跳过的不可靠通过条数（单独计数，不影响 pass/fail 计数）
+  unreliable_pass int    模型运气型不可靠通过条数（机制拒答不计入；单独计数，不影响 pass/fail 计数）
   verdict_values  list   本批实际出现过的结论取值（pass|fail|environment 的子集），排序后
 
 by_stage[]        {stage, total, pass, fail, environment}，按阶段名排序；
@@ -331,12 +335,14 @@ failed_by_category[]     {category, cases[], root_causes[]}，按类别排序
     evidence[]   {case, check, expect, observed, outcome_status}，逐条保留
 
 unreliable_passes[] {id, stage, category, refused, skipped_checks[]}
-  refused=true 且 skipped_checks=[] -> 没有断言被跳过，纯靠 status_in 接受拒答 +
-  模型自发拒答过关（R2 即此类）
+  只收模型运气型的：refused=true 且 skipped_checks=[] -> 没有断言被跳过，纯靠 status_in
+  接受拒答 + 模型自发拒答过关（R2 那类）。语义层机制拒答的采样（runs[].error.type=
+  semantic_refusal）不进这里，也不贡献 refused/skipped_checks；要分清拒答是谁拒的，
+  读 cases[].runs[].error。
 
 cases[]           run_cases 的记录原样（stage / runs / failures / verdict /
                   passing_runs / decidable_runs ...）；
-                  每个已判定 run 都带 guard、enforcement、time_fix、refusal_accepted、skipped_checks，离线复核够用
+                  每个 run 都带 guard、enforcement、time_fix、error；已判定的还带 refusal_accepted、skipped_checks，离线复核够用
 
 run_context       {mode(stage|all), stage, stages, cases_path, db_path, db_months,
                   model, used_llm}
@@ -354,6 +360,8 @@ meta
   purpose / anchor_today / notes[] / cases(int)
   stages                必填非空对象：{阶段名: {status: done|pending, promise: str}}
                         status 是 --all 退出码的唯一数据源；promise 是该阶段的承诺范围
+                        （纯展示文本，代码不读，判分与退出码只看 status；v1 的文案已按
+                         实际实现收窄成「口径声明（不含澄清）、空结果标记、语义拒答」）
 
 cases[]
   id                     "S1" ...        报告和 --ids 都用它
@@ -380,7 +388,7 @@ cases[]
 1. 期望全部写进 JSON，别在 Python 里加 if。
 2. 每条断言都要带 `root_cause` + `why` + `landing`，少一个 `load_cases` 直接报错；`root_cause` 用短横线小写英文（`guard-misses-quoted-function`），报告按（类别, root_cause）分组。
 3. 用例必须标 `stage`，取值以 `meta.stages` 为准；新阶段先在 `meta.stages` 里登记（做完把 status 从 pending 转 done，退出码自动开始拦它）。
-4. 别让 done 阶段的用例靠"接受拒答"过关：v0 没有保证拒答发生的组件，这种 pass 会被标成不可靠通过。想让拒答判对，是给 pending 阶段用例写的断言（如 R 类硬要求 `status_in=["no_sql"]`）。
+4. done 阶段的用例把 `status_in` 放宽收 `no_sql` 之前，先手跑确认拒答是谁拒的：语义层机制拒答（`runs[].error.type=semantic_refusal`）是代码保证的，不进不可靠清单；模型自发拒答的 pass 会被标成不可靠通过。
 5. 想让"合理拒答"判通过，就在 `status_in` 的期望里加 `no_sql`；不想让拒答直接通过就别加。
 6. 问题里涉及"上个月/近 30 天"：先确认锚定日期下数据确实存在，必要时用 `requires_data_months` 把前提声明出来。
 7. 涉及数学期望值：优先用相对容差，并在 `meta.notes` 里写明绑定的 `init_db.py` 种子与规模（改数据就得重算期望值）。
@@ -392,18 +400,21 @@ cases[]
 ## 7. 评测依赖的被测接口增量（细节见根目录 NOTES.md）
 
 ```text
-pipeline.ask()  —— src/data_agent/pipeline.py:28
-  today: date | None = None        (:35)  基准日期，默认当前日期；原样传进生成器 (:91)
-  injected_sql: str | None = None  (:36)  非空则跳过取表结构与模型调用，
-                              把这条 SQL 当作模型输出；语义层（指标必需条件注入 :111、
-                              时间边界校验 :125）与 guard (:134)、只读执行照常
-                              与 generator 同时传 -> injected 优先 + warning (:81)
-                              两个都不传 -> ValueError (:86)
+pipeline.ask()  —— src/data_agent/pipeline.py:30
+  语义拒答（graph.builder.run_semantic_gate，:90）：不通过就 status=no_sql、sql=null、
+                              llm_response=拒答文案、error.type=semantic_refusal（:93）；
+                              通过才继续，后面每一步都按原写法跑
+  today: date | None = None        (:37)  基准日期，默认当前日期；原样传进生成器 (:117)
+  injected_sql: str | None = None  (:38)  非空则跳过语义拒答检查、取表结构与模型调用，
+                              把这条 SQL 当作模型输出；SQL 层语义检查（指标必需条件注入 :137、
+                              时间边界校验 :151）与 guard (:160)、只读执行照常
+                              与 generator 同时传 -> injected 优先 + warning (:107)
+                              两个都不传 -> ValueError (:112)
                               注入路径 outcome.llm_response 与 caliber_note 都保持 null
                               （没有模型回复，就没有原始文本也没有口径声明）；
                               time_fix 不是注入路径专属：模型 SQL 同样会过这一步，
                               有可识别的时间边界时就有值
-  debug: bool = False              (:37)  每步输入/输出各打印一行到 stderr，
+  debug: bool = False              (:39)  每步输入/输出各打印一行到 stderr，
                               不改返回值也不改业务逻辑；评测不传，走默认 False
 
 SqlGenerator = Callable[[str, str, date], GeneratedSql]   llm_client.py:28
@@ -416,13 +427,15 @@ load_config(env_file=None, *, require_llm=True) -> Config  config.py:72
 
 ## 8. 已知注意事项（读报告前先过一遍）
 
-- 注入用例不调模型，但仍然走完整语义层、guard 和执行 —— **测的是防线，不是模型**。
+- 注入用例不调模型，但仍然走 SQL 层的语义检查、guard 和执行 —— **测的是防线，不是模型**。注意语义**拒答**检查是问题级的，注入通道整个跳过（S1/S2 的问题文本只是标签，不是业务问题），所以 S1/S2 的 outcome 里不会出现 `semantic_refusal`。
+- **评测不断言拒答原因，但报告看得见**：`run_eval` 每次采样都把 `outcome.error` 拷进 run 记录（`error` 键，:193），所以 `cases[].runs[].error.type == "semantic_refusal"` 直接在报告 JSON 里读得到，拒答文案在 `error.message`。仍没有的是**断言**：judge 没有"拒答原因/原因码"这类 check，R1/R3 只断言 `status_in / sql_null / sql_not_matches`，原因写歪了不会让用例变红。以后要断言原因，得先给 outcome 加结构化字段（当前被"对外返回字段一个都不能改"的约束挡着——原因码 `reason_code` 只存在于 `semantic_check` 的返回值里，不在 outcome 契约中）、再给 judge 加 check。
+- 拒答发生在模型调用之前，所以 R1/R3 实际是 0 次模型调用：`plan_summary` 打的"模型 N 次"是按用例数预估的上界，真跑时这两条不会花钱，也不会因模型抖动翻绿又翻红——现在是代码保证的通过，不再是"碰巧拒答"，因此也不进不可靠通过清单（判据见 §2.6）。R2 现在的通过同样是机制拒答带来的，不再是运气。
 - K1 变绿要看 `time_fix`：闭区间上界可能是**系统按字段类型改写成 `< 下月第一天`** 的，不代表模型自己会写边界。语义层第二步只修边界写法，**不校验时间字段选得对不对**（那是 K3 的 `sql_matches paid_at` 管的事）。
 - 模型用例受温度影响，一次 pass 不代表稳定：看 `passing_runs/decidable_runs`，别只看 verdict。
 - `result_value_in` 只比第一个数值单元格，不认列名，也不管行数；需要精确列时用 `sql_matches` 补一刀。
 - `llm_response_matches` 只看模型原始回复。提示词已要求模型在 ```sql 代码块之外再输出一行「口径：」声明，所以 K 类"要声明口径"的断言有文字可读了；这段声明同时被单独抽进 `outcome.caliber_note`，但**评测层还没有对应的断言类型**（只有 `llm_response_matches` 能碰到它），要精确判"声明了哪三项"得先加 check。
 - 拒答跳过只作用于 `status_in` 接受 `no_sql` 的用例；不接受时 `no_sql` 会判失败，这是有意的设计。
-- "不可靠通过"只检测**拒答/跳过**这一种运气（判据机械：refusal_accepted 或 skipped_checks）。其他形式的"碰巧过"（比如模型猜对数值）不在清单里 —— 看到清单为空不等于全部可靠。
+- "不可靠通过"只检测**模型自发拒答 / 断言被跳过**这一种运气（判据机械：refusal_accepted 或 skipped_checks，且 `error.type != semantic_refusal`）。清单为空只说明「没有靠模型运气拿到的通过」，其他形式的"碰巧过"（比如模型猜对数值）从来不在检测范围里。
 - K1 / S2 的期望值绑演示库：`SEED=20261029`（`scripts/init_db.py:16`）、`ORDERS_PER_MONTH=160`（`scripts/init_db.py:25`）、customers=40。`python scripts/init_db.py --force` 换种子后这些数字要重算，报告里会体现为数值与行数断言变红。
 - 全量报告没有"按类别通过率"表了（老版 `by_category` 的产物）；类别只剩两个用途：失败分组的分组键、`unreliable_passes.category` 展示字段。
 - 演示库不存在时 runner 直接返回退出码 2 并提示执行 `scripts/init_db.py`，不会打印完整异常栈。
