@@ -178,12 +178,16 @@ def run_cases(
                 today=today,
             )
             status = outcome.get("status")
-            # 每次采样都留 guard 原样输出：通过的用例也要能回看是凭哪条规则过的
+            # 每次采样都留 guard 原样输出：通过的用例也要能回看是凭哪条规则过的；
+            # enforcement 同样保留：SQL 里的订单范围条件是模型写的还是系统补的，报告要说得清；
+            # time_fix 同样保留：边界写法是模型写的还是系统按字段类型改的，报告也要说得清
             run = {
                 "run": run_index,
                 "status": status,
                 "sql": outcome.get("sql"),
                 "guard": outcome.get("guard"),
+                "enforcement": outcome.get("enforcement"),
+                "time_fix": outcome.get("time_fix"),
             }
             if status in ("llm_error", "runner_crash"):
                 run["environment"] = outcome.get("error")

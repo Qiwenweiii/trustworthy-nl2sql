@@ -58,6 +58,20 @@ def render(outcome: dict) -> str:
         lines.append("口径声明:")
         lines.extend(f"  {line}" for line in caliber.splitlines())
 
+    enforcement = outcome.get("enforcement")
+    if enforcement and enforcement.get("changed"):
+        lines.append(f"指标强制（{enforcement['metric']}）:")
+        for item in enforcement["actions"]:
+            if item["type"] in ("added", "conflict_replaced"):
+                lines.append(f"  - {item['detail']}")
+
+    time_fix = outcome.get("time_fix")
+    if time_fix and time_fix.get("changed"):
+        lines.append("时间边界修正:")
+        for item in time_fix["actions"]:
+            if item["type"] == "boundary_rewritten":
+                lines.append(f"  - {item['detail']}")
+
     if outcome["status"] == "blocked":
         violations = outcome["guard"]["violations"]
         lines.append(f"拦截规则 ({len(violations)} 条):")

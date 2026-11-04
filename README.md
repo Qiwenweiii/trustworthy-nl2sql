@@ -3,7 +3,7 @@
 v0 是给评测系统用的“靶子”，不是最终产品。链路只有一条：
 
 ```
-自然语言问题 -> LLM 生成 SQL -> 静态安全校验 -> SQLite 只读执行 -> 输出结果
+自然语言问题 -> LLM 生成 SQL -> 语义层（指标必需条件强制注入 -> 时间边界校验）-> 静态安全校验 -> SQLite 只读执行 -> 输出结果
 ```
 
 不做：口径澄清、结果校验 / 证据组装、Web、多轮会话、trace 落盘。调用链细节只在 `--debug`（或 `ask(debug=True)`）下按「一步一行」打印到 stderr，见「debug 模式」；不写库、不写文件，关闭后无任何输出。
@@ -46,6 +46,10 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | `sql`                | string \| null | 送去执行的 SQL；`blocked` 时是模型生成、被拦下的原始 SQL；`no_sql` / `llm_error` 时为 null          |
 | `guard`              | object \| null | `{"passed": bool, "violations": [...]}`，静态校验结果；`no_sql` / `llm_error` 时未执行校验，为 null |
 | `guard.violations[]` | object         | 每条拦截原因：`rule`（规则名）、`detail`（人类可读说明）、`token`（命中的关键字/函数名，可缺省）    |
+| `enforcement`        | object \| null | 语义层订单范围强制注入的记录 `{"metric", "required_filters", "changed", "actions": [...]}`；问题没匹配到指标或没有 SQL 时为 null。`changed=true` 表示送去执行的 SQL 被系统改过（不是模型原文） |
+| `enforcement.actions[]` | object      | 每条一个动作：`type` = `added`（缺必需条件被补上）/ `conflict_replaced`（模型写冲突取值，以指标定义为准改写，带 `from`/`to`）/ `already_present`（模型已写对，没动）/ `skipped`（未注入，`detail` 说明原因） |
+| `time_fix`          | object \| null | 语义层时间边界校验的记录 `{"changed", "actions": [...]}`；SQL 里没有可识别的时间边界谓词时为 null。`changed=true` 表示送去执行的 SQL 被系统改过边界写法（不是模型原文） |
+| `time_fix.actions[]` | object       | 每条一个动作：`type` = `boundary_rewritten`（DATETIME 字段的闭区间上界改成半开区间，带 `from`/`to`）/ `already_correct`（DATE 字段、上界已带时分：写法本来就对，没动）/ `skipped`（未修正，`detail` 说明原因：列找不到、类型判不出、库读不到、上界不是合法日期） |
 | `result`             | object \| null | 仅在 `status == "ok"` 时非空，见下表                                                                |
 | `result.columns`     | string[]       | 结果列名                                                                                            |
 | `result.rows`        | object[]       | 结果行，已转成 `{列名: 值}`                                                                         |
@@ -64,7 +68,7 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | 参数           | 默认     | 行为                                                                                                                                                                                                                                                          |
 | -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `today`        | 当前日期 | 基准日期，原样传进 SQL 生成器用于提示词里的“上个月”等相对时间；评测冻结为 `2026-10-30`，正常运行不传                                                                                                                                                          |
-| `injected_sql` | `None`   | 非空时跳过取 schema 与模型调用，把这条 SQL 当作模型输出；静态校验与只读执行照常进行（**注入不绕过 guard**），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示），`caliber_note` 同样保持 null（没有模型回复，就没有口径声明）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
+| `injected_sql` | `None`   | 非空时跳过取 schema 与模型调用，把这条 SQL 当作模型输出；语义层检查（订单范围注入、时间边界校验）、静态校验与只读执行照常进行（**注入不绕过 guard**，缺订单范围条件同样会被补上并记进 `enforcement`，DATETIME 字段的闭区间上界同样会被改写并记进 `time_fix`），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示），`caliber_note` 同样保持 null（没有模型回复，就没有口径声明）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
 | `debug`        | `False`  | 为 `True` 时将链路每一步的输入/输出各打印一行到 **stderr**（格式见「debug 模式」）。仅影响打印，返回值字段与业务逻辑不变                                                                                     |
 
 `generator` 与 `injected_sql` 至少提供一个，否则抛 `ValueError`。生成器签名为 `Callable[[str, str, date], GeneratedSql]`（问题、schema 文本、基准日期）。
@@ -105,12 +109,16 @@ python -m data_agent.cli "删除所有订单" --debug --json   # 两者可同用
 ```
 [ask] question: 上个月销售额是多少
 [ask] schema: 表 customers: - id INTEGER PK -- 客户ID ... 表 orders: - channel TEXT -- 下单渠道：app/web/miniapp/offline
-[ask] sql: SELECT SUM(amount) FROM orders WHERE order_date >= '2026-09-01' ...
+[ask] sql: SELECT SUM(amount) FROM orders WHERE paid_at BETWEEN '2026-09-01' AND '2026-09-30' ...
+[ask] metric: 指标=销售额 changed=True 缺少必需条件，系统补入 status = 'paid'
+[ask] time: changed=True paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'
 [ask] guard: passed=True violations=0
 [ask] exec: rows=1 elapsed_ms=2.31
 ```
 
-- 固定 5 步：`question` → `schema` → `sql` → `guard` → `exec`；任一步提前结束会再补一行 `[ask] outcome: status=xxx`（`no_sql` / `blocked`），LLM 调用失败则打印 `[ask] llm_error: ... | status=llm_error`。
+- 固定 7 步：`question` → `schema` → `sql` → `metric` → `time` → `guard` → `exec`；任一步提前结束会再补一行 `[ask] outcome: status=xxx`（`no_sql` / `blocked`），LLM 调用失败则打印 `[ask] llm_error: ... | status=llm_error`。
+- `metric` 行是语义层注入的痕迹：给出匹配到的指标、是否改写了 SQL（`changed`）与每条动作说明；问题没匹配到指标时打「未匹配指标，不注入」，没有 SQL（拒答）时不打这行。
+- `time` 行是语义层时间边界校验的痕迹：给出是否改写了边界写法（`changed`）与每条动作说明；SQL 里没有可识别的时间边界谓词时打「未识别到时间边界，不修正」，没有 SQL（拒答）时不打这行。
 - `guard` 行给 `passed=`、违规条数，以及每条违规的 `规则名(细节)`；`exec` 行成功时给 `rows=` / `elapsed_ms`，失败时给错误信息。
 - 走 `injected_sql` 时不读取 schema，该行显示 `跳过（injected_sql）`。
 - 输出只写 stderr，`--json` 从 stdout 读到的 JSON 不受打印影响；关闭时不产生任何输出。
@@ -146,6 +154,28 @@ assert data["status"] == "blocked"
 assert "forbidden_keyword" in {v["rule"] for v in data["guard"]["violations"]}
 ```
 
+## 语义层：订单范围强制注入 + 时间边界校验（v1）
+
+### 第一步：指标定义与订单范围强制注入
+
+K1 的病根是"订单范围靠模型自觉"不可靠：同一个问题有时写 `status='paid'`、有时不写。现在把它变成系统行为：
+
+- `services/metrics.py` 里登记指标（现有**销售额**、**订单数**两条），每条记录名称、同义词、必需过滤条件（订单范围 `status = 'paid'`）、时间字段与口径公式。**时间字段和公式在这一步只登记、不校验**；时间边界写法由下面第二步的 `time_boundary` 负责，口径公式仍未校验。
+- SQL 生成之后、静态校验与执行之前，`enforce_metric_filters(question, sql)` 按问题匹配指标，把必需条件强制落到 SQL 上：缺失就补进 WHERE（原条件整体加括号再 AND，没有 WHERE 就插在 GROUP BY / ORDER BY / LIMIT 之前）；模型写了冲突取值（如 `status='refunded'`、`status IN ('paid','refunded')`）以指标定义为准改写。
+- 线性管道，没有分支：所有 SQL（含 `injected_sql`）都过这道检查，改写后再进 guard。
+- 痕迹记在 `outcome.enforcement`：`changed=true` 说明送去执行的 SQL 被系统补过/改过，`actions[]` 里能看到每一条动了什么、从什么改到什么；评测与调试据此分辨条件是谁写进去的。
+
+### 第二步·小步一：时间边界校验
+
+K1 第 3 次失败暴露的是另一侧：不是**时间字段选错**，是**DATETIME 字段套了 DATE 的闭区间写法**。`paid_at` 带时分，模型写 `paid_at BETWEEN '2026-09-01' AND '2026-09-30'` 就把 9 月 30 日当天 00:00 之后支付的订单整段漏掉（演示库上少 11214.73）。
+
+- `services/time_boundary.py` 在**指标注入之后、guard 之前**跑：`fix_time_boundaries(sql, db_path=...)` 找出 SQL 里的 `BETWEEN` 闭区间与 `<=` 上界，把上界的仅日期字面量改成次日 00:00 的排他上界（`paid_at >= '2026-09-01' AND paid_at < '2026-10-01'`）。选半开区间而不是 `DATE(列)` 包一层：口径等价、不吃索引，也不给执行计划添函数。
+- **只改边界写法，绝不替换时间字段**：用户点名 `paid_at`（K3），改写后出现的仍然是 `paid_at`；指标定义里登记的 `time_field` 不参与这道检查。
+- 字段类型以库里的事实为准：声明类型是 `DATETIME`/`TIMESTAMP` 直接认定；SQLite 常见的 `TEXT` 声明就抽样最多 200 条非空取值，看真实形态带不带时分（`order_date` 抽样只有日期 -> 判为 DATE，闭区间不动）。
+- 三种写法本来就对，系统不碰：DATE 字段的闭区间、上界已带时分（`'2026-09-30 23:59:59'`）、`DATE(paid_at) BETWEEN ...` 这类被函数包住的列。严格小于 `<` 本来就是排他上界，也不在射程内。
+- 判不出来就不动，且**不报错**：列在 SQL 引用的表里都不存在、同名列跨表无法确定归属、取值形态不认识、全是 NULL、库文件读不到、上界不是合法日期——一律记 `skipped` 加原因。SQL 里没有可识别的时间边界谓词时连库都不打开，`time_fix` 为 null。
+- 痕迹记在 `outcome.time_fix`，形状与 `enforcement` 一致（`changed` + `actions[]`，`boundary_rewritten` 带 `from`/`to`）；评测报告每次采样都原样记录。
+
 ## 安全设计（三层独立防线）
 
 1. **静态校验** `services/sql_guard.py`：单条语句、首关键字只允许 `SELECT` / `WITH`、禁用写操作关键字和危险函数。命中即 `blocked`，SQL 不碰数据库。
@@ -160,7 +190,7 @@ assert "forbidden_keyword" in {v["rule"] for v in data["guard"]["violations"]}
 pytest -q
 ```
 
-覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因。
+覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）、语义层订单范围注入（缺失补上 / 冲突改写 / 已写对不动 / 未匹配指标不注入，`tests/test_metrics.py` + pipeline 集成用例）、语义层时间边界校验（DATETIME 闭区间改半开区间且不改字段 / DATE 字段不动 / 上界已带时分不动 / 函数包裹与 `<` 不在射程 / 列找不到与库读不到只记 skipped 不抛错，`tests/test_time_boundary.py` + pipeline 集成用例）。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因。
 
 ## 评测（阶段制）
 
@@ -200,6 +230,6 @@ python -m evaluation.run_eval --all
 
 ## v0 已知边界
 
-- 口径只做声明、不做澄清：提示词要求模型在 SQL 代码块之外再输出一行口径声明（金额口径 / 时间口径 / 订单范围），落在 `caliber_note`；用户没说清时不反问，按默认（`SUM(orders.amount)`，含税）出数，但默认必须写进声明。声明与 SQL 是否真的相符（例如订单范围有没有落到 `status` 条件）仍靠模型自觉，没有指标定义表做校验。
+- 口径只做声明、不做澄清：提示词要求模型在 SQL 代码块之外再输出一行口径声明（金额口径 / 时间口径 / 订单范围），落在 `caliber_note`；用户没说清时不反问，按默认（`SUM(orders.amount)`，含税）出数，但默认必须写进声明。**订单范围已不再靠模型自觉**——指标定义会强制注入/改写 `status = 'paid'`（见「语义层」一节）；**时间边界的写法也不再靠模型自觉**——DATETIME 字段的闭区间上界会被系统改成半开区间（见「语义层」一节）。仍没有校验的是：金额口径（含税/不含税公式是否真按声明逐行扣减）、时间**字段**选得对不对（该按 `paid_at` 却写了 `order_date`）、以及"声明与 SQL 是否真的相符"。
 - 结果校验只做空结果标记：0 行或全 NULL 会标 `result.empty_result` 并在输出说「当前条件下没有数据」；负值、异常量级、NULL 比例等仍不告警。
 - SQL 生成质量取决于模型，v0 不保证准确率。
