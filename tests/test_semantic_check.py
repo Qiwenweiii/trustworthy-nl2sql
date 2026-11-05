@@ -10,10 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from data_agent.services.schema import COLUMN_NOTES
-from data_agent.services.semantic_check import (
+from data_agent.semantic_tables import (
+    COLUMN_NOTES,
     DIMENSIONS,
     REASON_CODES,
+)
+from data_agent.services.semantic_check import (
     check_question,
     supported_dimensions,
 )

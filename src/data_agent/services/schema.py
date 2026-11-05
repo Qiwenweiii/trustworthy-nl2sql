@@ -6,21 +6,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-COLUMN_NOTES = {
-    "customers.id": "客户ID",
-    "customers.name": "客户名称",
-    "customers.city": "所在城市",
-    "customers.segment": "客户类型：企业/中小企业/个人",
-    "orders.id": "订单ID",
-    "orders.order_no": "订单号",
-    "orders.customer_id": "关联 customers.id",
-    "orders.order_date": "下单日期（YYYY-MM-DD）",
-    "orders.paid_at": "支付时间，未支付为 NULL",
-    "orders.status": "订单状态：paid=已支付, refunded=已退款, cancelled=已取消",
-    "orders.amount": "订单金额（元，含税）",
-    "orders.tax_amount": "税额（元），已取消订单为 NULL",
-    "orders.channel": "下单渠道：app/web/miniapp/offline",
-}
+from ..semantic_tables import COLUMN_NOTES
 
 
 def describe_schema(db_path: Path) -> str:

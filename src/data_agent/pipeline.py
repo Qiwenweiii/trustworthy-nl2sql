@@ -1,30 +1,31 @@
 """一次问数的编排：问题 -> 语义层拒答检查 -> 生成 SQL -> 指标必需条件强制注入 -> 时间边界校验 -> 静态校验 -> 只读执行。
 
-除拒答检查那一段（检查通过/拒答的岔路在 graph/ 里用 LangGraph 装配）以外，
-每一步都是显式入参、返回结构化结果的普通函数。
+本文件只负责"按顺序调用、该收尾就收尾"；每一步怎么写 outcome、怎么打 debug 痕迹，
+在 pipeline_steps.py 里一函数一步。除拒答检查那一段（检查通过/拒答的岔路在 graph/
+里用 LangGraph 装配）以外，各步都是显式入参、返回结构化结果的普通函数。
 outcome 的字段是评测契约，见 README。
 """
 
 from __future__ import annotations
 
-import logging
-import sqlite3
-import sys
 import time
 from datetime import date
 from pathlib import Path
 
-from .graph.builder import run_semantic_gate
-from .services.executor import QueryTimeout, is_result_empty, run_query
+from .pipeline_steps import (
+    enforce_metrics,
+    execute,
+    fix_time,
+    make_tracer,
+    new_outcome,
+    resolve_sql,
+    run_guard,
+    run_refusal_gate,
+    stamp,
+)
 from .services.llm_client import SqlGenerator
-from .services.metrics import enforce_metric_filters
-from .services.schema import describe_schema
-from .services.sql_guard import check_sql
-from .services.time_boundary import fix_time_boundaries
 
 STATUSES = ("ok", "blocked", "no_sql", "exec_error", "timeout", "llm_error")
-
-LOGGER = logging.getLogger(__name__)
 
 
 def ask(
@@ -54,147 +55,36 @@ def ask(
     debug 为 True 时把每一步的输入/输出各打成一行 stderr，不影响返回值与业务逻辑。
     """
     started = time.monotonic()
-    outcome = {
-        "question": question,
-        "status": "ok",
-        "sql": None,
-        "guard": None,
-        "enforcement": None,
-        "time_fix": None,
-        "result": None,
-        "error": None,
-        "llm_response": None,
-        "caliber_note": None,
-        "elapsed_ms": 0.0,
-    }
-
-    def finish() -> dict:
-        """补上端到端耗时并交出 outcome；链路上任何一步提前收尾都走这里。"""
-        outcome["elapsed_ms"] = round((time.monotonic() - started) * 1000, 2)
-        return outcome
-
-    def trace(label: str, value) -> None:
-        """debug 开启时把某一步的输入/输出压成一行写到 stderr。"""
-        if not debug:
-            return
-        text = " ".join(str(value).split())
-        print(f"[ask] {label}: {text}", file=sys.stderr, flush=True)
-
+    outcome = new_outcome(question)
+    trace = make_tracer(debug)
     trace("question", question)
 
-    # 语义层拒答检查：链路上第一个真正的岔路，只有这一段用 LangGraph。
-    # 拒答发生在模型调用之前——不调模型、不出 SQL，后面的注入/时间修正/guard/执行都不进。
-    # injected_sql 是"SQL 由外部给定、问题文本只是标签"的离线复放通道，问题层检查跳过，
-    # SQL 层的两道语义检查照常（注入不享有绕过校验的特权）。
-    if injected_sql is None:
-        verdict = run_semantic_gate(question)["verdict"]
-        if not verdict["allowed"]:
-            message = verdict["message"]
-            outcome["status"] = "no_sql"
-            outcome["llm_response"] = message
-            outcome["error"] = {"type": "semantic_refusal", "message": message}
-            terms = "、".join(item["term"] for item in verdict["residues"]) or "（无）"
-            trace("refuse", f"reason={verdict['reason_code']} terms={terms} metric={verdict['metric']} | {message}")
-            trace("outcome", "status=no_sql")
-            return finish()
-        dims = "、".join(verdict["matched_dimensions"]) or "（无）"
-        trace("refuse", f"通过 metric={verdict['metric']} dims={dims}")
-    else:
-        trace("refuse", "跳过（injected_sql）")
+    # 语义层拒答检查：拒答发生在模型调用之前，拒了就到此为止（详见 pipeline_steps 各步函数）
+    if run_refusal_gate(question, outcome, trace, injected_sql=injected_sql):
+        return stamp(outcome, started)
 
-    if injected_sql is not None:
-        if generator is not None:
-            LOGGER.warning("generator ignored due to injected_sql")
-        sql = injected_sql
-        trace("schema", "跳过（injected_sql）")
-    else:
-        if generator is None:
-            raise ValueError("generator 与 injected_sql 必须至少提供一个")
-        schema_text = describe_schema(db_path)
-        trace("schema", schema_text)
-        run_date = today or date.today()
-        try:
-            generated = generator(question, schema_text, run_date)
-        except Exception as exc:  # LLM 网络/鉴权错误统一落成 llm_error
-            outcome["status"] = "llm_error"
-            outcome["error"] = {"type": "llm_error", "message": str(exc)}
-            trace("llm_error", f"{exc} | status={outcome['status']}")
-            return finish()
-        outcome["llm_response"] = generated.raw_response
-        outcome["caliber_note"] = generated.caliber_note
-        sql = generated.sql
-
-    outcome["sql"] = sql
-    trace("sql", "无" if sql is None else sql)
-
+    # 取 SQL：注入通道或 schema+模型；llm_error / no_sql 在这一步内收好状态
+    sql = resolve_sql(
+        question,
+        outcome,
+        trace,
+        generator=generator,
+        db_path=db_path,
+        today=today,
+        injected_sql=injected_sql,
+    )
     if sql is None:
-        outcome["status"] = "no_sql"
-        trace("outcome", "status=no_sql")
-        return finish()
+        return stamp(outcome, started)
 
-    # 语义层强制注入：所有 SQL（含 injected_sql）都过这道检查，没有分支；
-    # 改写后的 SQL 再进 guard，注入不享有绕过校验的特权
-    sql, enforcement = enforce_metric_filters(question, sql)
-    outcome["sql"] = sql
-    outcome["enforcement"] = enforcement
-    if enforcement is None:
-        trace("metric", "未匹配指标，不注入")
-    else:
-        actions = " | ".join(item["detail"] for item in enforcement["actions"])
-        trace(
-            "metric",
-            f"指标={enforcement['metric']} changed={enforcement['changed']} {actions}",
-        )
+    # 语义层两步：订单范围强制注入、时间边界校验（注入不享有绕过校验的特权）
+    sql = enforce_metrics(question, sql, outcome, trace)
+    sql = fix_time(sql, db_path, outcome, trace)
 
-    # 时间边界校验：DATETIME 字段的闭区间上界会漏掉"月末当天"的数据，只改边界写法，
-    # 不替换模型选的时间字段（用户点名 paid_at，改写后还是 paid_at）
-    sql, time_fix = fix_time_boundaries(sql, db_path=db_path)
-    outcome["sql"] = sql
-    outcome["time_fix"] = time_fix
-    if time_fix is None:
-        trace("time", "未识别到时间边界，不修正")
-    else:
-        actions = " | ".join(item["detail"] for item in time_fix["actions"])
-        trace("time", f"changed={time_fix['changed']} {actions}")
+    # 静态校验：拦截即 blocked
+    guarded = run_guard(sql, outcome, trace)
+    if guarded is None:
+        return stamp(outcome, started)
 
-    guard = check_sql(sql)
-    guard_dict = guard.as_dict()
-    outcome["guard"] = guard_dict
-    violations = guard_dict["violations"]
-    rules = " ".join(f"{item['rule']}({item['detail']})" for item in violations)
-    trace("guard", f"passed={guard.passed} violations={len(violations)} {rules}")
-    if not guard.passed:
-        outcome["status"] = "blocked"
-        trace("outcome", "status=blocked")
-        return finish()
-
-    outcome["sql"] = guard.sql
-    try:
-        result = run_query(
-            db_path, guard.sql, max_rows=max_rows, timeout_s=query_timeout_s
-        )
-    except QueryTimeout as exc:
-        outcome["status"] = "timeout"
-        outcome["error"] = {"type": "timeout", "message": str(exc)}
-        trace("exec", f"timeout | {exc}")
-    except sqlite3.Error as exc:
-        outcome["status"] = "exec_error"
-        outcome["error"] = {"type": "sql_error", "message": str(exc)}
-        trace("exec", f"error | {exc}")
-    else:
-        outcome["status"] = "ok"
-        result_dict = result.as_dict()
-        outcome["result"] = result_dict
-        trace(
-            "exec",
-            f"rows={result_dict['row_count']} elapsed_ms={result_dict['elapsed_ms']}",
-        )
-        if is_result_empty(result.rows):
-            # 只按本次结果的形状判定，不重跑 SQL 验证；NULL/0 行必须说破，
-            # 免得用户把空结果当成真实答案。文案含「没有数据」，与评测用例的断言正则一致
-            notice = "当前条件下没有数据"
-            raw = outcome["llm_response"]
-            outcome["llm_response"] = f"{raw}\n{notice}" if raw else notice
-            trace("exec", f"empty_result=True | {notice}")
-
-    return finish()
+    # 只读执行 + 空结果标记
+    execute(db_path, guarded, outcome, trace, max_rows=max_rows, timeout_s=query_timeout_s)
+    return stamp(outcome, started)

@@ -15,32 +15,7 @@ from __future__ import annotations
 
 import re
 
-# 订单范围：销售额/订单数都只算已支付订单；退款(refunded)、取消(cancelled)不计入。
-ORDER_SCOPE_PAID = {
-    "column": "status",
-    "value": "paid",
-    "sql": "status = 'paid'",
-    "note": "订单范围：只算已支付（status='paid'），退款与取消不计入",
-}
-
-METRICS: dict[str, dict] = {
-    "销售额": {
-        "name": "销售额",
-        "synonyms": ["销售额", "营收", "GMV", "成交额", "销售金额", "收入"],
-        "table": "orders",
-        "time_field": "order_date",
-        "formula": "含税 SUM(amount)；不含税 SUM(amount - COALESCE(tax_amount, 0))",
-        "required_filters": [ORDER_SCOPE_PAID],
-    },
-    "订单数": {
-        "name": "订单数",
-        "synonyms": ["订单数", "订单量", "下单量", "成交订单数", "单量"],
-        "table": "orders",
-        "time_field": "order_date",
-        "formula": "COUNT(*)",
-        "required_filters": [ORDER_SCOPE_PAID],
-    },
-}
+from ..semantic_tables import METRICS
 
 # 谓词位置用掩码文本定位（字符串/注释遮蔽、长度不变），谓词内容从原文切片取。
 # 谓词正则直接扫原文：极端情况（字符串字面量里恰好出现 status='xxx'）会误判，

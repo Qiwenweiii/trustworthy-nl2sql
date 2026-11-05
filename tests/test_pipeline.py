@@ -177,7 +177,7 @@ def test_injected_sql_is_still_guarded(demo_db):
 
 def test_injected_sql_logs_generator_ignored(demo_db, caplog):
     """同时传 generator 和 injected_sql 时，注入优先并在日志里说明生成器被忽略。"""
-    with caplog.at_level("WARNING", logger="data_agent.pipeline"):
+    with caplog.at_level("WARNING", logger="data_agent.pipeline_steps"):
         ask(
             "一共有多少订单",
             generator=_stub("SELECT 1 AS a"),
@@ -318,7 +318,7 @@ def test_today_defaults_to_current_date(demo_db, monkeypatch):
         seen["today"] = today
         return GeneratedSql(sql="SELECT count(*) AS n FROM orders", raw_response="x")
 
-    monkeypatch.setattr("data_agent.pipeline.date", _FixedDate)
+    monkeypatch.setattr("data_agent.pipeline_steps.date", _FixedDate)
     ask("一共有多少订单", generator=record_generator, db_path=demo_db)
     assert seen["today"] == _FixedDate.today()
 
