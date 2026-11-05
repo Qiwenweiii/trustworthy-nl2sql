@@ -35,6 +35,7 @@ from ..semantic_tables import (
     TIME_PATTERNS,
     TIME_PHRASES,
 )
+from .metrics import match_metric_in  # 指标匹配唯一实现（二期 2b 去重），拒答与注入共用
 
 
 def _iter_alias_spans(text: str, words) -> list[tuple[int, int, str]]:
@@ -249,18 +250,6 @@ def check_question(
         verdict["reason_code"] = code
         verdict["message"] = _build_message(code, verdict, metrics, dimensions)
     return verdict
-
-
-def match_metric_in(text: str, metrics: dict) -> dict | None:
-    """按指标名/同义词在文本里找指标，多个命中取最长词（与 metrics.match_metric 同规则）。"""
-    lowered = (text or "").lower()
-    best: dict | None = None
-    best_len = 0
-    for metric in metrics.values():
-        for term in (metric["name"], *metric.get("synonyms", [])):
-            if len(term) > best_len and term.lower() in lowered:
-                best, best_len = metric, len(term)
-    return best
 
 
 def _in(text: str, words) -> bool:

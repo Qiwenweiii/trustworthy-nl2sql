@@ -28,16 +28,25 @@ _CLAUSE_KEYWORD_RE = re.compile(
 )
 
 
-def match_metric(question: str) -> dict | None:
-    """按指标名/同义词在问题里找指标；多个命中时取最长词，避免"销售额"漏判。"""
-    text = (question or "").lower()
+def match_metric_in(text: str, metrics: dict) -> dict | None:
+    """按指标名/同义词在文本里找指标；多个命中时取最长词，避免"销售额"漏判。
+
+    唯一的指标匹配实现：semantic_check 的拒答判定与本模块的强制注入共用这份判据，
+    两处规则不可能再各自漂移。metrics 参数让测试能构造替身登记表。
+    """
+    lowered = (text or "").lower()
     best: dict | None = None
     best_len = 0
-    for metric in METRICS.values():
-        for term in (metric["name"], *metric["synonyms"]):
-            if len(term) > best_len and term.lower() in text:
+    for metric in metrics.values():
+        for term in (metric["name"], *metric.get("synonyms", [])):
+            if len(term) > best_len and term.lower() in lowered:
                 best, best_len = metric, len(term)
     return best
+
+
+def match_metric(question: str) -> dict | None:
+    """按问题文本在登记表 METRICS 里找指标。"""
+    return match_metric_in(question, METRICS)
 
 
 def enforce_metric_filters(question: str, sql: str) -> tuple[str, dict | None]:

@@ -202,3 +202,11 @@ def test_reason_codes_are_a_closed_set():
     for case in _non_injected_cases():
         verdict = check_question(case["question"])
         assert verdict["reason_code"] in (None, *REASON_CODES)
+
+
+def test_metric_matcher_is_a_single_implementation():
+    """拒答判定与强制注入共用同一个指标匹配函数（二期 2b 去重前的两份实现在此判红）。"""
+    from data_agent.services import metrics as metrics_module
+    from data_agent.services import semantic_check as semantic_check_module
+
+    assert semantic_check_module.match_metric_in is metrics_module.match_metric_in
