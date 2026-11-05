@@ -58,7 +58,7 @@
 
 ### 5. 数据层：SQLite + DuckDB + JSONL
 
-> 落地：**只做了「演示与查询用 SQLite」这一格**。指标定义与维度定义既不在 SQLite 表也不在 JSON 文件，而是 Python 常量 `METRICS`（`metrics.py:26`）/ `DIMENSIONS`（`semantic_check.py:30`）；会话、checkpoint、trace 索引、JSONL 事件流**全部未做**。「不混用」的原则保留：查询走只读连接，配置走环境变量，评测期望值走用例 JSON。
+> 落地：**只做了「演示与查询用 SQLite」这一格**。指标定义与维度定义既不在 SQLite 表也不在 JSON 文件，而是 Python 常量 `METRICS`（`semantic_tables.py:22`）/ `DIMENSIONS`（`semantic_tables.py:45`）；会话、checkpoint、trace 索引、JSONL 事件流**全部未做**。「不混用」的原则保留：查询走只读连接，配置走环境变量，评测期望值走用例 JSON。
 
 **决策**：三个存储各司其职，不混用。
 
@@ -122,7 +122,7 @@ src/
 
 ## 三、核心数据结构
 
-> ⚠️ 本节四个结构中，**只有 3.4 的「断言不接收 SQL」这条硬约束以别的形式成立**（`is_result_empty(rows)` 签名里没有 SQL），其余字段名与形态都和当前代码不一致。落地实况见 §四 的 3.1～3.4c 各行。真正对外稳定、不可改的数据结构是 `outcome` 字典，字段字典在根目录 `NOTES.md:335-386`。
+> ⚠️ 本节四个结构中，**只有 3.4 的「断言不接收 SQL」这条硬约束以别的形式成立**（`is_result_empty(rows)` 签名里没有 SQL），其余字段名与形态都和当前代码不一致。落地实况见 §四 的 3.1～3.4c 各行。真正对外稳定、不可改的数据结构是 `outcome` 字典，字段字典在根目录 `NOTES.md:349-400`。
 
 ### 1. AgentState（TypedDict + Reducer）
 
@@ -274,18 +274,18 @@ CREATE INDEX idx_query_runs_thread ON query_runs(thread_id, created_at);
 
 | # | 原决策（§一～§三） | 状态 | 实际落地 |
 |---|---|---|---|
-| 1.1 | LangGraph `StateGraph` 编排 | **收窄** | 原决策的三条约束全部保留（节点只写自己的 key、条件边是纯函数、不用 `create_agent`），但图只覆盖**一个岔路**：语义拒答。`graph/` 共 3 个文件、98 行：`SemanticGateState` 三键（`graph/state.py:8`）、两个节点（`nodes/gate_check.py:9` / `nodes/gate_refuse.py:11`）、一条条件边（`builder.py:24`），`lru_cache` 编译一次（`builder.py:31`）。**链路其余七步是普通函数调用**，顺序见 `pipeline.py:90 → :137 → :151 → :160 → :173 → :192`。 |
-| 1.1b | 配合 SQLite checkpointer 做断点恢复 | **未做** | `build_graph()` 是裸 `compile()`，无 checkpointer。理由：语义拒答是单次判定，没有断点恢复需求（见 `NOTES.md:44`）。原决策里的 `thread_id` 概念整个不存在。 |
+| 1.1 | LangGraph `StateGraph` 编排 | **收窄** | 原决策的三条约束全部保留（节点只写自己的 key、条件边是纯函数、不用 `create_agent`），但图只覆盖**一个岔路**：语义拒答。`graph/` 共 3 个文件、98 行：`SemanticGateState` 三键（`graph/state.py:8`）、两个节点（`nodes/gate_check.py:9` / `nodes/gate_refuse.py:11`）、一条条件边（`builder.py:24`），`lru_cache` 编译一次（`builder.py:31`）。**链路其余七步是普通函数调用**，顺序见 `pipeline.py` 的 `ask()`（`:63 → :67 → :80 → :81 → :84 → :89`）：拒答 → 取 SQL → 指标注入 → 时间边界 → guard → 执行，每步实现在 `pipeline_steps.py` 一函数一步。 |
+| 1.1b | 配合 SQLite checkpointer 做断点恢复 | **未做** | `build_graph()` 是裸 `compile()`，无 checkpointer。理由：语义拒答是单次判定，没有断点恢复需求（见 `NOTES.md:46`）。原决策里的 `thread_id` 概念整个不存在。 |
 | 1.2 | FastAPI + SSE（`/ask`、`/health`） | **未做** | 无 `api/` 目录、无 `src/data_agent/routers`。入口是 CLI：`cli.main(argv)`（`cli.py:89`），`python -m data_agent.cli "问题" [--json] [--debug]`。原决策的「routers 里不写 SQL、不调 LLM」这条分层原则，被「评测只调 `pipeline.ask()`，CLI 只做渲染」替代。 |
 | 1.3 | DuckDB 演示分析库 | **替换** | SQLite（`data/demo.db`，`orders` + `customers` 两张表，`scripts/init_db.py:29-48`）。原方案的三条安全加固里有两条**不适用于 SQLite**，改用等价手段：`read_only=True` + `enable_external_access=false` + `lock_configuration=true` → 只读 URI `file:…?mode=ro` + `enable_load_extension(False)` + authorizer 白名单（`services/executor.py:open_readonly_connection`）；看门狗线程调 `connection.interrupt()` → `set_progress_handler(_on_progress, 1000)`（`executor.py:100`）。**唯一仍然成立的教训**：`read_only` 单独使用不安全——SQLite 侧对应的是 `load_extension`，所以它被显式关掉，并在静态校验（`forbidden_function`）和 authorizer 层各拦一次。 |
 | 1.4 | LiteLLM 统一网关 | **替换** | `openai` SDK 直连 OpenAI 兼容端点（`llm_client.py:9` `from openai import OpenAI`）。切本地模型改 `OPENAI_BASE_URL` 环境变量，不改代码——达到原决策「不改业务代码即可换 provider」的目的，代价是没有 provider 名前缀（`ollama/llama3.2`）那种一行切换。`temperature=0` 保留。**「API Key 只从环境变量读、LLM 调用封装在独立 client」两条约束都成立**：`config.py` 读 `.env`，graph 节点与 pipeline 都不持有 SDK 实例。 |
-| 1.5 | 三存储各司其职（SQLite 元数据 / DuckDB 演示 / JSONL trace） | **部分** | 演示与查询用 SQLite（原方案里 SQLite 只存元数据）；**指标定义不进 SQLite，是 Python 常量** `METRICS`（`metrics.py:26`）；维度定义同理 `DIMENSIONS`（`semantic_check.py:30`）；**JSONL 与 trace 索引整个没做**（见 3.3）。 |
+| 1.5 | 三存储各司其职（SQLite 元数据 / DuckDB 演示 / JSONL trace） | **部分** | 演示与查询用 SQLite（原方案里 SQLite 只存元数据）；**指标定义不进 SQLite，是 Python 常量** `METRICS`（`semantic_tables.py:22`）；维度定义同理 `DIMENSIONS`（`semantic_tables.py:45`）；**JSONL 与 trace 索引整个没做**（见 3.3）。 |
 | 1.6 | 语义层：JSON 文件 + 确定性别名匹配 | **一半成立** | 「确定性别名匹配、不做模糊匹配、不做向量检索」**完整保留**，这是拒答实现的判据基础（`README.md:252`）。「放在 JSON 文件里」没做到：登记表是 Python 字典，改动需改代码而非改数据文件。原决策说的「模糊匹配留到 v2 只作召回兜底」仍为待办。 |
-| 2 | 目录结构（`src/api`、7 个 `graph/nodes`、`services/semantic.py`、`services/trace.py`、`data/semantic/metrics.json`） | **未照做** | 实际 `src/data_agent/`：`pipeline.py`、`cli.py`、`config.py`、`prompts.py`、`graph/`（3 文件）、`services/`（7 个：`schema` / `llm_client` / `sql_guard` / `metrics` / `time_boundary` / `semantic_check` / `executor`）。**「能力在 services、编排层只做流转」这条分层原则成立**，`semantic_check` 的判定逻辑就放在 services 里，所以单测不装 LangGraph 也能测（`NOTES.md:252`）。 |
-| 3.1 | `AgentState`（TypedDict + `add` Reducer，14 个键） | **未做** | 只有 `SemanticGateState` 三键（`question` / `verdict` / `route`），**没有任何 Reducer**，因为没有多节点写同一个键。链路状态由 `outcome` 字典承载（字段字典见 `NOTES.md:335-386`），它就是评测契约。 |
-| 3.2 | `metrics.json` 结构（`aliases` / `calibers[]` / `default_caliber` / `non_negative`） | **字段名与形态都不同** | `METRICS` 每条是 `name` / `synonyms` / `table` / `time_field` / `formula` / `required_filters`（`metrics.py:26-44`，现登记销售额、订单数两条）。**没有 `calibers` 数组**——含税/不含税两种口径只写在 `formula` 的自由文本里，因此「`calibers` 长度 > 1 且 `default_caliber` 为空 → 门控触发澄清」这条约束**没有对应实现**（澄清未做，见下）。`non_negative` 也没登记，因为负值断言未做。表/列名同样对不上：原方案写 `fct_sales.stat_date`，实际是 `orders.order_date` / `orders.paid_at`。 |
+| 2 | 目录结构（`src/api`、7 个 `graph/nodes`、`services/semantic.py`、`services/trace.py`、`data/semantic/metrics.json`） | **未照做** | 实际 `src/data_agent/`：`pipeline.py`（只留编排）、`pipeline_steps.py`（链路六步一函数一步）、`semantic_tables.py`（登记表与词表，纯数据）、`cli.py`、`config.py`、`prompts.py`、`graph/`（3 文件）、`services/`（扁平 7 个：`schema` / `llm_client` / `sql_guard` / `metrics` / `time_boundary` / `semantic_check` / `executor`）。**「能力在 services、编排层只做流转」这条分层原则成立**，`semantic_check` 的判定逻辑就放在 services 里，所以单测不装 LangGraph 也能测（`NOTES.md:266`）。 |
+| 3.1 | `AgentState`（TypedDict + `add` Reducer，14 个键） | **未做** | 只有 `SemanticGateState` 三键（`question` / `verdict` / `route`），**没有任何 Reducer**，因为没有多节点写同一个键。链路状态由 `outcome` 字典承载（字段字典见 `NOTES.md:349-400`），它就是评测契约。 |
+| 3.2 | `metrics.json` 结构（`aliases` / `calibers[]` / `default_caliber` / `non_negative`） | **字段名与形态都不同** | `METRICS` 每条是 `name` / `synonyms` / `table` / `time_field` / `formula` / `required_filters`（`semantic_tables.py:22`，现登记销售额、订单数两条）。**没有 `calibers` 数组**——含税/不含税两种口径只写在 `formula` 的自由文本里，因此「`calibers` 长度 > 1 且 `default_caliber` 为空 → 门控触发澄清」这条约束**没有对应实现**（澄清未做，见下）。`non_negative` 也没登记，因为负值断言未做。表/列名同样对不上：原方案写 `fct_sales.stat_date`，实际是 `orders.order_date` / `orders.paid_at`。 |
 | 3.3 | 查询链路记录（`query_runs` 摘要表 + JSONL 事件流） | **未做** | 不落盘任何东西。替代方案是**三层可对质证据**：① `outcome` 契约字段（`enforcement` / `time_fix` / `guard` / `error`）；② `--debug` 八步一次性打印到 stderr（`README.md:100-127`）；③ 评测报告每次采样原样保留这些字段（`docs/eval_report_final.json` 是归档快照，运行产物 `problems/eval_report.json` 已进 `.gitignore`）。原决策「trace 一旦写入不允许修改」因没有 trace 而无从违反。 |
-| 3.4 | 门控返回 `ambiguity` / `clarification_options` / `events` | **替换** | `check_question()` 返回 `allowed` / `reason_code` / `residues` / `message` 等（`semantic_check.py:234`，形状见 `NOTES.md:224-234`）。**没有澄清选项**——v1 的承诺是「口径声明（不含澄清）」（`eval_cases.json` 的 `meta.stages.v1.promise`），用户没说清口径时按默认口径出数，但必须把默认写进 `caliber_note`（`prompts.py:18`）。 |
+| 3.4 | 门控返回 `ambiguity` / `clarification_options` / `events` | **替换** | `check_question()` 返回 `allowed` / `reason_code` / `residues` / `message` 等（`semantic_check.py:156`，形状见 `NOTES.md:238-248`）。**没有澄清选项**——v1 的承诺是「口径声明（不含澄清）」（`eval_cases.json` 的 `meta.stages.v1.promise`），用户没说清口径时按默认口径出数，但必须把默认写进 `caliber_note`（`prompts.py:18`）。 |
 | 3.4b | 断言节点返回 `assertions` / `severity`，且**拿不到 `generated_sql`** | **原则保留，形态未做** | 没有 `result_assert` 节点、没有 `severity` 字段。但「检查逻辑不得重跑 SQL、不得复用计算函数」这条**硬约束以更强形式成立**：唯一的执行后检查是纯函数 `is_result_empty(rows)`（`executor.py:50`），只看结果形状，签名里根本没有 SQL。**未实现**：负值告警、NULL 比例告警（`README.md:251` 已列为已知边界）。 |
 | 3.4c | 证据组装（口径 / 来源表 / SQL / 校验结论四件套） | **收窄** | 现在给出：SQL、口径声明 `caliber_note`、两道语义层改动痕迹、空结果标记、guard 结论。**缺**：来源表面向用户的显式标注（表名只在 `schema` 与 debug 行里）、以及「正常 / 有异常 / 无法可靠回答」的整体结论——拒答有文案但没有统一的校验结论标签。 |
 | 4 | 实施顺序阶段一/二/三 | **顺序被打乱，覆盖面收窄** | 见下节 §五 的逐步对照。 |
@@ -312,7 +312,7 @@ CREATE INDEX idx_query_runs_thread ON query_runs(thread_id, created_at);
 
 | 原步骤 | 实际 |
 |---|---|
-| 一.1 语义层 | 做了，但是 `metrics.py` 的 `METRICS` 常量 + `semantic_check.py` 的 `DIMENSIONS`；测试是 `test_metrics.py` + `test_semantic_check.py`。 |
+| 一.1 语义层 | 做了，但是 `semantic_tables.py` 的 `METRICS` / `DIMENSIONS` 常量 + `services/semantic_check.py` 的判定；测试是 `test_metrics.py` + `test_semantic_check.py`。 |
 | 一.2 四节点图 | **只做了拒答这一个岔路**（两个节点）。`generate_sql` / `execute` / `answer` 是 pipeline 里的函数调用，不是节点。 |
 | 一.3 执行器 + 静态审计 | 做了，SQLite 版：`sql_guard.py` + `executor.py` 三层防线（`README.md:195-201`）。 |
 | 一.4 `/ask` | **没做 HTTP**，做成了 CLI + `pipeline.ask()`；`today` / `injected_sql` / `debug` 三个可选入参为评测预留（`README.md:66-74`）。 |

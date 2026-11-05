@@ -19,6 +19,8 @@
 
 整条链路的唯一入口，评测也只调它。输入一个问题，它依次完成：先做一次语义层拒答判定（撑不住的问题直接拒答、不进模型，见「semantic_check」与「graph」两个模块）-> 读取库的表结构 -> 让大模型写成 SQL -> 按指标定义强制补齐订单范围条件（语义层，见 metrics 模块）-> 按库里字段的真实类型校验时间边界（语义层，见 time_boundary 模块）-> 对这条 SQL 做安全校验 -> 用只读连接执行 -> 把结果打包成一个字典返回。
 
+**实现分两层**：`pipeline.py`（90 行）只留按顺序调用与提前收尾；每一步怎么写 outcome、怎么打 debug 痕迹在 `pipeline_steps.py`，一函数一步——outcome 骨架 `new_outcome`（:28）、耗时收尾 `stamp`（:45）、debug tracer `make_tracer`（:51）、拒答 `run_refusal_gate`（:63）、取 SQL `resolve_sql`（:90）、指标注入 `enforce_metrics`（:135）、时间边界 `fix_time`（:154）、静态校验 `run_guard`（:170）、执行与判空 `execute`（:189）。搬家重构（2026-11-05）只挪了位置，语句与行为与瘦身前一致。
+
 **输入**
 
 | 参数              | 类型         | 人话                                                         |
@@ -77,7 +79,7 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 `ok` / `blocked` / `no_sql` / `exec_error` / `timeout` / `llm_error`，六选一，含义见 README。注意 `no_sql` 现在有两个来源，靠 `error` 分辨：语义层拒答带 `error.type="semantic_refusal"`（模型一次都没调），模型自己回 NO_SQL 时 `error` 仍是 `null`。
 
-**debug 打开时的输出格式**（`trace()`，只写 stderr，`--json` 从 stdout 读到的 JSON 不受影响）
+**debug 打开时的输出格式**（`make_tracer()` 返回的 `trace`，`pipeline_steps.py:51`，只写 stderr，`--json` 从 stdout 读到的 JSON 不受影响）
 
 ```text
 [ask] question: ...
@@ -91,6 +93,18 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 [ask] exec: empty_result=True | 当前条件下没有数据（只在判为空时补这一行）
 [ask] outcome: status=...（只在提前收尾时多这一行）
 ```
+
+---
+
+## semantic_tables — `src/data_agent/semantic_tables.py`
+
+语义层的登记表与词表：**纯数据，没有一行逻辑**。想回答"系统认识哪些指标/维度/列/说法"只看这个文件；消费方是 metrics（强制注入判据）、semantic_check（拒答判据）、schema（提示词列说明）。加指标、加维度、补词只改这里。
+
+- `ORDER_SCOPE_PAID`（:15）/ `METRICS`（:22）：指标登记表——名称、同义词、数据表、时间字段（只登记不校验）、口径公式（只登记不校验）、必需过滤条件（订单范围）。
+- `DIMENSIONS`（:45）：唯一维度登记表——名称、别名、绑定的列、枚举取值、`applies_to`。
+- `COLUMN_NOTES`（:82）：渲染进提示词的中文列说明，键形如 `"orders.amount"`。
+- `CALIBER_ALIASES`（:102）/ `ENTITY_NOUNS`（:106）/ `GRAMMAR_WORDS`（:108）/ `TIME_PHRASES`（:117）/ `TIME_PATTERNS`（:123）/ `TIME_HINT_CHARS`（:132）/ `DIMENSION_HINT_WORDS`（:138）/ `SKIPPABLE_CHARS`（:143）：拒答判定"涂色留残片"用的词表与字符集。
+- `REASON_CODES`（:146）：`check_question` 结论里 `reason_code` 的全部取值。
 
 ---
 
@@ -161,7 +175,7 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 语义层第一步：**指标定义 + 订单范围强制注入**。纯文本处理，不碰数据库。存在的理由：同一个问题模型有时写 `status='paid'` 有时不写（K1 三次只过一次），必需条件不能再靠模型自觉。
 
-`METRICS`（模块级字典）—— 指标登记表，现有销售额、订单数两条。每条记录：`name`、`synonyms`、`table`（数据表）、`time_field`（时间字段，本步只登记不校验）、`formula`（口径公式，本步只登记不校验）、`required_filters`（必需过滤条件，现只有订单范围 `status = 'paid'`，取值 `ORDER_SCOPE_PAID`）。
+`METRICS`（登记表在 `semantic_tables.py:22`，本模块 import 后消费）—— 指标登记表，现有销售额、订单数两条。每条记录：`name`、`synonyms`、`table`（数据表）、`time_field`（时间字段，本步只登记不校验）、`formula`（口径公式，本步只登记不校验）、`required_filters`（必需过滤条件，现只有订单范围 `status = 'paid'`，取值 `ORDER_SCOPE_PAID`，`semantic_tables.py:15`）。
 
 `match_metric(question) -> dict | None`—— 按指标名/同义词在问题里找指标（大小写不敏感），多个命中取最长词。没匹配到返回 `None`。
 
@@ -217,9 +231,9 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 ## semantic_check — `services/semantic_check.py`
 
-`check_question(question, *, metrics=None, dimensions=None) -> dict`（semantic_check.py:234）—— 生成 SQL 之前的语义拒答判定。**纯函数**：只读问题文本和两份静态登记表，不调模型、不连数据库，所以能单测（`tests/test_semantic_check.py` 直接拿 `problems/eval_cases.json` 的 9 条非注入用例问题文本核对）。
+`check_question(question, *, metrics=None, dimensions=None) -> dict`（semantic_check.py:156）—— 生成 SQL 之前的语义拒答判定。**纯函数**：只读问题文本和两份静态登记表，不调模型、不连数据库，所以能单测（`tests/test_semantic_check.py` 直接拿 `problems/eval_cases.json` 的 9 条非注入用例问题文本核对）。
 
-**输入**：`question` 用户问题；`metrics` / `dimensions` 只有测试会传（构造"某维度只对某指标可用"这类替身登记表），生产路径用模块级 `METRICS`（metrics.py:26）与 `DIMENSIONS`（semantic_check.py:30）。
+**输入**：`question` 用户问题；`metrics` / `dimensions` 只有测试会传（构造"某维度只对某指标可用"这类替身登记表），生产路径用 `semantic_tables.py` 里的 `METRICS`（:22）与 `DIMENSIONS`（:45）。
 
 **返回**：判定字典，键固定这些——
 
@@ -233,13 +247,13 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 | `dimension_values` / `time_terms` / `ignored_fragments` | 三条放行规则各自放过了什么，留痕给 debug 用，不参与拒答 |
 | `message` | 拒答文案，点名缺哪个词 + 列出当前支持的指标与维度；放行时为 `None` |
 
-**判据是反向覆盖，不是正向匹配**：词表把问题"涂色"（最长优先），没被涂到的连续片段就是缺口。R3「上个月新客销售额」能正常匹配到指标「销售额」，所以只看"有没有匹配到指标"永远抓不到它——缺口在残片里。词表来源：指标别名（`METRICS`）、口径词 `CALIBER_ALIASES`（:66，来自销售额定义里已有的含税/不含税两种算法）、维度别名与枚举取值（`DIMENSIONS`）、时间表达 `TIME_PHRASES`/`TIME_PATTERNS`、业务对象与语法词 `ENTITY_NOUNS`（:70）/`GRAMMAR_WORDS`（:72）。
+**判据是反向覆盖，不是正向匹配**：词表把问题"涂色"（最长优先），没被涂到的连续片段就是缺口。R3「上个月新客销售额」能正常匹配到指标「销售额」，所以只看"有没有匹配到指标"永远抓不到它——缺口在残片里。词表来源（都在 `semantic_tables.py`）：指标别名（`METRICS`，:22）、口径词 `CALIBER_ALIASES`（:102，来自销售额定义里已有的含税/不含税两种算法）、维度别名与枚举取值（`DIMENSIONS`，:45）、时间表达 `TIME_PHRASES`（:117）/`TIME_PATTERNS`（:123）、业务对象与语法词 `ENTITY_NOUNS`（:106）/`GRAMMAR_WORDS`（:108）。
 
-**三条放行规则**（`_residue_runs` :155 之后逐段判，宁可放过不误杀）：残片等于某个已登记的枚举取值放过；残片与维度别名紧邻（`_touches_dimension` :176，"抖音渠道"里的"抖音"）当取值放过——取值合不合法属于下一步的"维度取值校验"，本步不管；整段残片的每个字都落在 `TIME_HINT_CHARS`（:96）里就当时间表达放过（`前三个月`、`过去半年`、`今年以来`）。收紧到"整段都像时间"而不是"沾一个时间字符就放"，否则「月度环比」会一起漏过去。单字残片（口语尾巴"怎么样"剩下的"样"）只进 `ignored_fragments`，不做拒答依据。
+**三条放行规则**（`_residue_runs` :77 之后逐段判，宁可放过不误杀）：残片等于某个已登记的枚举取值放过；残片与维度别名紧邻（`_touches_dimension` :98，"抖音渠道"里的"抖音"）当取值放过——取值合不合法属于下一步的"维度取值校验"，本步不管；整段残片的每个字都落在 `TIME_HINT_CHARS`（semantic_tables.py:132）里就当时间表达放过（`前三个月`、`过去半年`、`今年以来`）。收紧到"整段都像时间"而不是"沾一个时间字符就放"，否则「月度环比」会一起漏过去。单字残片（口语尾巴"怎么样"剩下的"样"）只进 `ignored_fragments`，不做拒答依据。
 
 **不抛异常**：判不出缺口就放行；唯一例外是空问题，返回 `allowed=False` + `empty_question`。
 
-`supported_dimensions(metric_name)`（:186）—— 某指标支持的维度清单，从 `DIMENSIONS` 按 `applies_to` 反查。**维度只有一张登记表**，`METRICS` 里不另存维度清单，所以加维度只改一处、不可能两处不一致；`tests/test_semantic_check.py` 还双向核对"登记的列必须存在于 `COLUMN_NOTES`""能当维度的列必须已登记"。
+`supported_dimensions(metric_name)`（:108）—— 某指标支持的维度清单，从 `DIMENSIONS` 按 `applies_to` 反查。**维度只有一张登记表**，`METRICS` 里不另存维度清单，所以加维度只改一处、不可能两处不一致；`tests/test_semantic_check.py` 还双向核对"登记的列必须存在于 `COLUMN_NOTES`""能当维度的列必须已登记"。
 
 ## graph — `src/data_agent/graph/`
 
@@ -293,7 +307,7 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 - 输入：`db_path`。
 - 返回：一段多行文本，形如 `"表 orders:\n  - amount REAL  -- 订单金额（元，含税）"`。
 - 错误：`sqlite3.OperationalError`（库文件不存在）；`RuntimeError`（库里没有业务表）。
-- 备注从哪来：查 `COLUMN_NOTES` 这张表，键长这样 `"orders.amount"`。
+- 备注从哪来：查 `COLUMN_NOTES`（`semantic_tables.py:82`），键长这样 `"orders.amount"`。
 - 旧版本文档在这里写过一个 `note` 键，是笔误：`evaluate_case` 的断言结果里没有 `note` 这个字段（只有 `observed` 承担面向人的说明），本版按实际代码删掉了这条。
 
 ---

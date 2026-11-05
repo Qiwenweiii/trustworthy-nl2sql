@@ -163,9 +163,9 @@ assert "forbidden_keyword" in {v["rule"] for v in data["guard"]["violations"]}
 
 R1/R3 的病根是"没定义也能算"：表里没有区域字段，模型就自己编一串城市名做 `CASE` 映射；指标里没有"新客"，模型就用首单日期现造一个口径。两种答案看着像真的，其实是猜的。现在把判断挪到生成 SQL 之前：
 
-- `services/semantic_check.py` 的 `check_question(question)` 是**纯函数**：只读问题文本和两份静态登记表（指标 `METRICS`、维度 `DIMENSIONS`），不调模型、不连数据库，可以单独测试。
+- `services/semantic_check.py` 的 `check_question(question)` 是**纯函数**：只读问题文本和两份静态登记表（指标 `METRICS`、维度 `DIMENSIONS`，两张表与判定用的词表都集中在 `semantic_tables.py`），不调模型、不连数据库，可以单独测试。
 - 判据是**反向覆盖**而不是正向匹配：问题里每个词都要能被"指标别名 / 口径词 / 维度别名 / 时间表达 / 语法词"解释掉，解释不掉的残片就是缺口。R3「上个月新客销售额」照样能匹配到指标「销售额」，只看"有没有匹配到指标"永远抓不到它——缺口藏在残片里。
-- 维度只有一张登记表 `DIMENSIONS`（名称、别名、绑定的列、枚举取值、`applies_to`）。指标支持哪些维度是**从这张表反查**出来的，`METRICS` 里不另存维度清单，所以加维度只改一处、不可能漏；`tests/test_semantic_check.py` 还双向核对"登记的列必须存在于表结构说明""能当维度的列必须已登记"。
+- 维度只有一张登记表 `DIMENSIONS`（`semantic_tables.py`；名称、别名、绑定的列、枚举取值、`applies_to`）。指标支持哪些维度是**从这张表反查**出来的，`METRICS` 里不另存维度清单，所以加维度只改一处、不可能漏；`tests/test_semantic_check.py` 还双向核对"登记的列必须存在于表结构说明""能当维度的列必须已登记"。
 - 三条放行规则（宁可放过，不误杀能答的问题）：残片是已登记的枚举取值（`已支付`）放过；残片紧邻维度词（「抖音渠道」里的"抖音"）当取值放过；整段残片都长得像时间表达（`前三个月`、`过去半年`、`今年以来`）当时间放过。单字残片（口语尾巴）不参与拒答。
 - 拒答的四种原因码：`missing_metric`（指标没定义）、`missing_dimension`（拆分口径没登记）、`dimension_not_supported`（维度登记了但 `applies_to` 不含该指标）、`unknown_qualifier`（限定词没口径）。文案点名缺哪个词，并列出当前能答的指标与维度范围。
 - **这一段是链路上第一个真正的岔路**，所以用 LangGraph 装：`graph/` 里两个节点（`semantic_check` / `semantic_refuse`）+ 一条条件边（纯函数，只读 state 返回路由 key），检查通过就直接 `END` 交回 `ask()` 继续原来的线性链路。生成 SQL、强制注入、时间边界、guard、执行都还是普通函数调用，一行没改；不接 checkpointer（单次判定没有断点恢复需求）。
@@ -176,7 +176,7 @@ R1/R3 的病根是"没定义也能算"：表里没有区域字段，模型就自
 
 K1 的病根是"订单范围靠模型自觉"不可靠：同一个问题有时写 `status='paid'`、有时不写。现在把它变成系统行为：
 
-- `services/metrics.py` 里登记指标（现有**销售额**、**订单数**两条），每条记录名称、同义词、必需过滤条件（订单范围 `status = 'paid'`）、时间字段与口径公式。**时间字段和公式在这一步只登记、不校验**；时间边界写法由下面第二步的 `time_boundary` 负责，口径公式仍未校验。
+- 指标登记在 `semantic_tables.py` 的 `METRICS` 表（现有**销售额**、**订单数**两条），每条记录名称、同义词、必需过滤条件（订单范围 `status = 'paid'`）、时间字段与口径公式；消费方是 `services/metrics.py`（强制注入逻辑）。**时间字段和公式只登记、不校验**；时间边界写法由下面第二步的 `time_boundary` 负责，口径公式仍未校验。
 - SQL 生成之后、静态校验与执行之前，`enforce_metric_filters(question, sql)` 按问题匹配指标，把必需条件强制落到 SQL 上：缺失就补进 WHERE（原条件整体加括号再 AND，没有 WHERE 就插在 GROUP BY / ORDER BY / LIMIT 之前）；模型写了冲突取值（如 `status='refunded'`、`status IN ('paid','refunded')`）以指标定义为准改写。
 - 线性管道，没有分支：所有 SQL（含 `injected_sql`）都过这道检查，改写后再进 guard。
 - 痕迹记在 `outcome.enforcement`：`changed=true` 说明送去执行的 SQL 被系统补过/改过，`actions[]` 里能看到每一条动了什么、从什么改到什么；评测与调试据此分辨条件是谁写进去的。

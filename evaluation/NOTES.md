@@ -2,7 +2,7 @@
 
 **这份文档管什么**：`evaluation/` 里的评测代码 —— 怎么读用例、怎么判对错、怎么把结果汇总成报告。外加评测要依赖的 3 个被测接口增量（`ask(today=, injected_sql=, debug=)`、`load_config(require_llm=)`、`SqlGenerator` 签名）。
 
-**这份文档不管什么**：业务模块（pipeline / llm_client / sql_guard / executor / schema）自己的接口地图 —— 看根目录 `NOTES.md`；用例内容 —— 看 `problems/eval_cases.json`；为什么这么设计 —— 看 `docs/EVAL_DESIGN.md`。
+**这份文档不管什么**：业务模块（pipeline / pipeline_steps / semantic_tables / llm_client / sql_guard / metrics / time_boundary / semantic_check / executor / schema）自己的接口地图 —— 看根目录 `NOTES.md`；用例内容 —— 看 `problems/eval_cases.json`；为什么这么设计 —— 看 `docs/EVAL_DESIGN.md`。
 
 看的时候记住两种失败处理方式：
 
@@ -400,21 +400,23 @@ cases[]
 ## 7. 评测依赖的被测接口增量（细节见根目录 NOTES.md）
 
 ```text
-pipeline.ask()  —— src/data_agent/pipeline.py:30
-  语义拒答（graph.builder.run_semantic_gate，:90）：不通过就 status=no_sql、sql=null、
-                              llm_response=拒答文案、error.type=semantic_refusal（:93）；
-                              通过才继续，后面每一步都按原写法跑
-  today: date | None = None        (:37)  基准日期，默认当前日期；原样传进生成器 (:117)
-  injected_sql: str | None = None  (:38)  非空则跳过语义拒答检查、取表结构与模型调用，
-                              把这条 SQL 当作模型输出；SQL 层语义检查（指标必需条件注入 :137、
-                              时间边界校验 :151）与 guard (:160)、只读执行照常
-                              与 generator 同时传 -> injected 优先 + warning (:107)
-                              两个都不传 -> ValueError (:112)
+pipeline.ask()  —— src/data_agent/pipeline.py:31（只留编排；每步实现在 pipeline_steps.py，一函数一步）
+  语义拒答（run_refusal_gate，pipeline_steps.py:63；内部 graph.builder.run_semantic_gate :75）：
+                              不通过就 status=no_sql、sql=null、llm_response=拒答文案、
+                              error.type=semantic_refusal（:80）；通过才继续，
+                              后面每一步都按原写法跑
+  today: date | None = None        (:38)  基准日期，默认当前日期；原样传进生成器（pipeline_steps.py:116）
+  injected_sql: str | None = None  (:39)  非空则跳过语义拒答检查、取表结构与模型调用，
+                              把这条 SQL 当作模型输出；SQL 层语义检查（指标必需条件注入
+                              enforce_metrics pipeline_steps.py:135、时间边界校验 fix_time :154）
+                              与 guard (run_guard :170)、只读执行 (execute :189) 照常
+                              与 generator 同时传 -> injected 优先 + warning (pipeline_steps.py:106)
+                              两个都不传 -> ValueError (pipeline_steps.py:111)
                               注入路径 outcome.llm_response 与 caliber_note 都保持 null
                               （没有模型回复，就没有原始文本也没有口径声明）；
                               time_fix 不是注入路径专属：模型 SQL 同样会过这一步，
                               有可识别的时间边界时就有值
-  debug: bool = False              (:39)  每步输入/输出各打印一行到 stderr，
+  debug: bool = False              (:40)  每步输入/输出各打印一行到 stderr，
                               不改返回值也不改业务逻辑；评测不传，走默认 False
 
 SqlGenerator = Callable[[str, str, date], GeneratedSql]   llm_client.py:28
