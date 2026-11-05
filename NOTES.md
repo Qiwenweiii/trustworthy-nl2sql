@@ -142,13 +142,24 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 ---
 
+## sql_text — `services/sql_text.py`
+
+SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先 metrics / time_boundary / sql_guard 各自养的扫描循环合并到这里（`_scan_segments` :47 认出字符串、引号标识符、方括号标识符、行注释、块注释）。
+
+- `mask_sql(sql) -> str`（:86）—— 等长空格遮罩（引号内空白保留），metrics 定位子句关键字用。
+- `protected_spans(sql) -> list[(start, end)]`（:102）—— 受保护区间清单，time_boundary 跳过假谓词用。
+- `scan_views(sql) -> (structure, calls)`（:107）—— 结构/调用两份折叠视图（不保长度、位置不与原文对应），sql_guard 词法检查用。
+- `SqlScanError`（:28）—— **统一口径（用户 2026-11-05 确认）**：引号/方括号/块注释未闭合=整句判读不懂，三个投影一致抛错；消费方接到一律不动 SQL（metrics 记 `skipped`、time_boundary 记 `skipped`、guard 收敛成 `malformed_sql`）。合并前三份实现各有各的口径（不遮 / 后面整段保护 / 抛错），现在只剩这一条。
+
+---
+
 ## sql_guard — `services/sql_guard.py`
 
 `check_sql(sql) -> GuardResult`—— 判断"这条 SQL 是不是单条、只读的 SELECT"，并把不合格的原因一条条列出来。
 
 `as_dict()`是准备写入 outcome 的版本，只有 `{"passed", "violations"}` 两个键，**不含 `sql`**。
 
-**它的判定方法是这次改动里最不直观的一块，值得说明白**：扫一遍 SQL，产出两份文本，各管各的。
+**它的判定方法是这次改动里最不直观的一块，值得说明白**：扫一遍 SQL（`sql_text.scan_views`），产出两份文本，各管各的。
 
 - **结构视图**：把引号包起来的标识符折成一个占位符 `ident`。这份用来查关键字 —— 所以 `SELECT 'delete'` 里的 `delete` 不会被当成删除操作误杀。
 - **调用视图**：保留标识符的真实内容。这份用来查函数调用 —— 所以 `SELECT "load_extension"(...)` 这种想用引号规避校验的写法照样算一次函数调用。
@@ -160,7 +171,7 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
   - `passed`：放不放行。
   - `violations`：每条一个字典，`rule`（规则名）、`detail`（人话说明）、`token`（命中的关键字/函数名，有的规则没有这个键）。
   - `sql`：**去掉末尾分号后的规范化语句**，真正送去执行的是它，不是你传进来的原文。
-- 错误：不抛异常。非法输入也只返回 `passed=False`。
+- 错误：不抛异常。非法输入也只返回 `passed=False`。引号/注释未闭合走 `sql_text.SqlScanError`，在这里收敛成 `malformed_sql` violation。
 
 `strip_trailing_semicolons(sql) -> str`—— 把尾巴上的空白和分号抹掉。
 
@@ -188,9 +199,9 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
   - `added` —— SQL 里本来没有必需条件，系统补进 WHERE（有 WHERE 时原条件整体加括号再 AND，防 `OR` 被抢优先级；没有 WHERE 就插在 GROUP BY/HAVING/ORDER BY/LIMIT 之前）。
   - `conflict_replaced` —— 模型写了冲突取值（`status='refunded'`、`status IN ('paid','refunded')`、`<>`/`!=`、`NOT IN` 等排除式），**以指标定义为准就地改写**，记录带 `from`/`to`；列别名保留（`o.status` 改写后还是 `o.status`）。
   - `already_present` —— 必需条件已在（`status='paid'` 或 `status IN ('paid')`），不动 SQL。
-  - `skipped` —— 没注入并写明原因：SQL 未引用该指标的数据表，或文本形态找不到安全插入点。
+  - `skipped` —— 没注入并写明原因：SQL 未引用该指标的数据表，文本形态找不到安全插入点，或整句读不懂（引号/方括号/块注释未闭合，`sql_text.SqlScanError`——此时原 SQL 一字不动返回）。
 - `changed=true` 只可能是 `added` / `conflict_replaced` —— 评测与调试据此分辨"条件是谁写进 SQL 的"。
-- 实现是文本级手术：字符串/注释/引号标识符遮蔽成等长掩码定位顶层子句关键字，括号深度保证不钻进子查询的 WHERE；谓词正则直接扫原文，极端情况（字面量里恰好出现 `status='x'`）可能误判，演示范围接受。**无法识别形态时宁可不动，不做危险猜测。**
+- 实现是文本级手术：遮蔽用 `sql_text.mask_sql`（等长掩码）定位顶层子句关键字，括号深度保证不钻进子查询的 WHERE；谓词正则直接扫原文，极端情况（字面量里恰好出现 `status='x'`）可能误判，演示范围接受。**无法识别形态时宁可不动，不做危险猜测。**
 - 错误：不抛异常。
 
 ---
@@ -199,7 +210,7 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 语义层第二步·小步一：**时间边界校验**。存在的理由：K1 第 3 次失败不是字段选错，是 DATETIME 字段用了 DATE 的闭区间写法，`BETWEEN '2026-09-01' AND '2026-09-30'` 把 9 月 30 日当天带时分的订单整段漏掉。与 metrics 的分工：metrics 管"条件缺不缺"，本模块管"边界写法对不对"，两道痕迹分别记在 `enforcement` 与 `time_fix`。
 
-`fix_time_boundaries(sql, *, db_path) -> (new_sql, time_fix | None)`（time_boundary.py:112）
+`fix_time_boundaries(sql, *, db_path) -> (new_sql, time_fix | None)`（time_boundary.py:114）
 
 - 输入：SQL（指标注入**之后**的版本，所以看到 WHERE 里已经有系统补的 `status = 'paid'`）+ 演示库路径（只用来判列类型，用 `file:...?mode=ro` 只读连接）。
 - 返回：`(处理后的 SQL, 记录字典)`。SQL 里没有可识别的时间边界谓词时返回 `(原文, None)`，**这时不打开数据库**。
@@ -207,23 +218,23 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 - `actions[].type` 三种：
   - `boundary_rewritten` —— DATETIME 字段的仅日期闭区间上界改成半开区间，带 `from`/`to`；`BETWEEN` 展开成 `col >= '下界' AND col < '次日'`，`col <= '月末'` 改成 `col < '次日'`。别名前缀保留（`o.paid_at` 改写后还是 `o.paid_at`）。
   - `already_correct` —— 写法本来就对，没动：列判出是 DATE 类型、或上界字面量已带时分（`'2026-09-30 23:59:59'`）。
-  - `skipped` —— 没修正并写明原因：列在 SQL 引用的表里都不存在、同名列跨表无法确定归属、别名对不上任何表、取值形态不认识、全是 NULL、库读不到（`sqlite3.Error` 兜住）、上界不是合法日期（`date.fromisoformat` 报错）。
+  - `skipped` —— 没修正并写明原因：列在 SQL 引用的表里都不存在、同名列跨表无法确定归属、别名对不上任何表、取值形态不认识、全是 NULL、库读不到（`sqlite3.Error` 兜住）、上界不是合法日期（`date.fromisoformat` 报错），或整句读不懂（引号/方括号/块注释未闭合，`sql_text.SqlScanError`——判读不懂时连库都不开）。
 - 不抛异常：数据库不可读、列/表找不到都只落成 `skipped`。改写发生在 guard 之前，修正后的 SQL 照常过静态校验与只读执行。
 
-内部怎么判"这个字段是不是 DATETIME"（`_resolve_kind` :230、`_kind_of` :257）：
+内部怎么判"这个字段是不是 DATETIME"（`_resolve_kind` :244、`_kind_of` :271）：
 
-1. 先定位列属于哪张表：`_referenced_tables` (:310) 抓 FROM/JOIN 后的 `(表名, 别名)`；谓词写了 `o.paid_at` 就按别名对表，没写别名就在 SQL 引用的表里找有这一列的——**多张表都有同名列时不猜**，直接 `skipped`。
+1. 先定位列属于哪张表：`_referenced_tables` (:324) 抓 FROM/JOIN 后的 `(表名, 别名)`；谓词写了 `o.paid_at` 就按别名对表，没写别名就在 SQL 引用的表里找有这一列的——**多张表都有同名列时不猜**，直接 `skipped`。
 2. 列的声明类型含 `DATETIME`/`TIMESTAMP`/`TIME` -> datetime；以 `DATE` 开头 -> date（顺序不能颠倒，`DATETIME` 里也含 `DATE`）。
-3. SQLite 存日期时间的常态是声明成 `TEXT`，声明给不出信息时**抽样真实取值**（`_sample_values` :298，最多 `_SAMPLE_LIMIT` = 200 条非空值）：带 `HH:MM` 的是 datetime，只有 `YYYY-MM-DD` 的是 date，出现别的形态或非文本取值 -> unknown -> `skipped`。
+3. SQLite 存日期时间的常态是声明成 `TEXT`，声明给不出信息时**抽样真实取值**（`_sample_values` :312，最多 `_SAMPLE_LIMIT` = 200 条非空值）：带 `HH:MM` 的是 datetime，只有 `YYYY-MM-DD` 的是 date，出现别的形态或非文本取值 -> unknown -> `skipped`。
 4. 类型判定依据写进动作的 `detail`（"抽样 200 条 orders.paid_at 取值，带时分"），报告里能看到结论是怎么来的。
 
-谓词识别的三个"不动"（`_iter_predicates` :143）：
+谓词识别的三个"不动"（`_iter_predicates` :154）：
 
-- 落在字符串字面量、引号标识符、注释里的假谓词不算（`_protected_spans` :315 给出保护区间）。
-- 被函数包住的列不算（`_is_bare_column` :365）：`DATE(paid_at) BETWEEN ...` 已经是正确写法，不能二次改写；`WHERE (paid_at BETWEEN ...)` 里的左括号是分组括号，仍算裸列——靠括号前是不是 SQL 关键字区分（`_GROUPING_WORDS`）。
+- 落在字符串字面量、引号标识符、注释里的假谓词不算（`sql_text.protected_spans`，sql_text.py:102 给出保护区间；扫描抛 `SqlScanError` 即整句判读不懂，直接 `skipped`）。
+- 被函数包住的列不算（`_is_bare_column` :333）：`DATE(paid_at) BETWEEN ...` 已经是正确写法，不能二次改写；`WHERE (paid_at BETWEEN ...)` 里的左括号是分组括号，仍算裸列——靠括号前是不是 SQL 关键字区分（`_GROUPING_WORDS`）。
 - 只认闭区间上界：`BETWEEN` 的上界和 `<=`。`<` 本来就排他、`>=` 是下界，都不在射程内，系统不代替模型改口径。
 
-一处代价要说明：谓词正则直接扫原文（同 metrics 的取舍），极端情况（字面量里恰好出现 `paid_at BETWEEN '...' AND '...'`）可能误判，演示范围接受。表名/列名取自 SQL 文本，只用于拼只读查询的标识符，并按双引号转义（`_quote` :411）。
+一处代价要说明：谓词正则直接扫原文（同 metrics 的取舍），极端情况（字面量里恰好出现 `paid_at BETWEEN '...' AND '...'`）可能误判，演示范围接受。表名/列名取自 SQL 文本，只用于拼只读查询的标识符，并按双引号转义（`_quote` :379）。
 
 **方向性说明**：这道修正只会"把范围放宽到用户本来想要的整月"，不会缩窄。即使把 DATE 列误判成 datetime（比如 `FROM a, b` 逗号连接没被识别、取错了表），`col >= '2026-09-01' AND col < '2026-10-01'` 对纯日期取值与 BETWEEN 完全等价，结果不变。
 
