@@ -244,10 +244,11 @@ python -m evaluation.run_eval --all
 - K1 的期望值（414786.30 / 354636.03）绑定当前 `scripts/init_db.py` 的随机种子 `SEED=20261029` 与 `ORDERS_PER_MONTH=160`；改种子或改月度订单数需重算期望值。S2 的 `result_row_count=40` 同样绑定 customers 规模。
 - `result_value_in` 的容差必须在用例 JSON 里显式声明（`tolerance.mode` = `absolute` / `relative`），评测器不内置默认容差。
 - 用例的数据库前提（`requires_data_months` / `forbids_data_months`）由 runner 读演示库实际月份校验，不在代码里硬编码数据窗口，以后改 `init_db.py` 的时间范围不会引起误报。
+- **立项时的技术决策与当前实现有系统性偏差**，对照表在 `docs/TECH_DECISIONS.md` §四（DuckDB→SQLite、FastAPI+SSE→CLI、LiteLLM→openai SDK、trace/JSONL 与澄清未做、LangGraph 只装拒答一个岔路）。想按原方案补 Web 层或 trace，那节仍是有约束力的依据；只想改现有链路，以本 README 与 `NOTES.md` 为准。评测设计的收口实况与缺口清单见 `docs/EVAL_DESIGN.md` §5。
 
 ## v0 已知边界
 
-- 口径只做声明、不做澄清：提示词要求模型在 SQL 代码块之外再输出一行口径声明（金额口径 / 时间口径 / 订单范围），落在 `caliber_note`；用户没说清时不反问，按默认（`SUM(orders.amount)`，含税）出数，但默认必须写进声明。**订单范围已不再靠模型自觉**——指标定义会强制注入/改写 `status = 'paid'`（见「语义层」一节）；**时间边界的写法也不再靠模型自觉**——DATETIME 字段的闭区间上界会被系统改成半开区间（见「语义层」一节）。仍没有校验的是：金额口径（含税/不含税公式是否真按声明逐行扣减）、时间**字段**选得对不对（该按 `paid_at` 却写了 `order_date`）、以及"声明与 SQL 是否真的相符"。
+- 口径只做声明、不做澄清：提示词要求模型在 SQL 代码块之外再输出一行口径声明（金额口径 / 时间口径 / 订单范围），落在 `caliber_note`；用户没说清时不反问，按默认（`SUM(orders.amount)`，含税）出数，但默认必须写进声明。**订单范围已不再靠模型自觉**——指标定义会强制注入/改写 `status = 'paid'`（见「语义层」一节）；**时间边界的写法也不再靠模型自觉**——DATETIME 字段的闭区间上界会被系统改成半开区间（见「语义层」一节）。仍没有校验的是：金额口径（含税/不含税公式是否真按声明逐行扣减）、时间**字段**选得对不对（该按 `paid_at` 却写了 `order_date`）、以及"声明与 SQL 是否真的相符"。**这三条要区分两层**：评测层已对前两类写了断言（K1/K3 用 `sql_matches` 要求出现 `amount - COALESCE(tax_amount, 0)` 这类逐行扣减写法、用 `sql_not_matches` 禁止 `SUM(amount) - SUM(tax_amount)` 这种整体相减），所以**错了会在报告里红**；但**运行层不挡不改**，`METRICS` 里的 `formula` / `time_field` 只登记不执行——也就是说这类错误能被发现，不能在用户面前被拦住。
 - 结果校验只做空结果标记：0 行或全 NULL 会标 `result.empty_result` 并在输出说「当前条件下没有数据」；负值、异常量级、NULL 比例等仍不告警。
 - 语义拒答靠**确定性别名匹配**（`TECH_DECISIONS` 决策 6：不做模糊匹配、不做向量检索），所以它对称不对称很敏感：同义词表里没写的说法会被当成缺口拒答（例如「一共有多少订单」这种没登记成"订单数"同义词的口语），换来的是"宁可拒答也不硬编"。被拒时文案会列出当前支持的指标与维度，照着改问法就能过。
 - 拒答只判**指标/维度存不存在**，不判维度取值合不合法：「抖音渠道」照样送去生成 SQL，靠空结果标记说破"没数据"。取值枚举校验是下一步的能力。

@@ -433,7 +433,7 @@ load_config(env_file=None, *, require_llm=True) -> Config  config.py:72
 - K1 变绿要看 `time_fix`：闭区间上界可能是**系统按字段类型改写成 `< 下月第一天`** 的，不代表模型自己会写边界。语义层第二步只修边界写法，**不校验时间字段选得对不对**（那是 K3 的 `sql_matches paid_at` 管的事）。
 - 模型用例受温度影响，一次 pass 不代表稳定：看 `passing_runs/decidable_runs`，别只看 verdict。
 - `result_value_in` 只比第一个数值单元格，不认列名，也不管行数；需要精确列时用 `sql_matches` 补一刀。
-- `llm_response_matches` 只看模型原始回复。提示词已要求模型在 ```sql 代码块之外再输出一行「口径：」声明，所以 K 类"要声明口径"的断言有文字可读了；这段声明同时被单独抽进 `outcome.caliber_note`，但**评测层还没有对应的断言类型**（只有 `llm_response_matches` 能碰到它），要精确判"声明了哪三项"得先加 check。
+- `llm_response_matches` 只看模型原始回复。提示词已要求模型在 ```sql 代码块之外再输出一行「口径：」声明，所以 K 类"要声明口径"的断言有文字可读了；这段声明同时被单独抽进 `outcome.caliber_note`，但**评测层还没有对应的断言类型**（只有 `llm_response_matches` 能碰到它），要精确判"声明了哪三项"得先加 check。注意 K1/K3 的 `sql_matches` 已经管住了 **SQL 侧的公式形状**（必须出现 `amount - COALESCE(tax_amount)`、禁止整体相减），缺的是**声明侧**——即"声明说的口径"和"SQL 干的口径"是否同一件事，全项目至今没有任何断言比对这两个。缺口清单见 `docs/EVAL_DESIGN.md` §5。
 - 拒答跳过只作用于 `status_in` 接受 `no_sql` 的用例；不接受时 `no_sql` 会判失败，这是有意的设计。
 - "不可靠通过"只检测**模型自发拒答 / 断言被跳过**这一种运气（判据机械：refusal_accepted 或 skipped_checks，且 `error.type != semantic_refusal`）。清单为空只说明「没有靠模型运气拿到的通过」，其他形式的"碰巧过"（比如模型猜对数值）从来不在检测范围里。
 - K1 / S2 的期望值绑演示库：`SEED=20261029`（`scripts/init_db.py:16`）、`ORDERS_PER_MONTH=160`（`scripts/init_db.py:25`）、customers=40。`python scripts/init_db.py --force` 换种子后这些数字要重算，报告里会体现为数值与行数断言变红。
