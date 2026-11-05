@@ -16,10 +16,12 @@ from __future__ import annotations
 import re
 
 from ..semantic_tables import METRICS
+from .sql_text import SqlScanError, mask_sql
 
 # 谓词位置用掩码文本定位（字符串/注释遮蔽、长度不变），谓词内容从原文切片取。
 # 谓词正则直接扫原文：极端情况（字符串字面量里恰好出现 status='xxx'）会误判，
-# 演示范围内接受这个代价，不做完整词法解析。
+# 演示范围内接受这个代价，不做完整词法解析。扫描判读不懂（引号/注释未闭合）
+# 时整条 SQL 不动，只记 skipped——统一口径，见 services/sql_text.py。
 _PREDICATE_HEAD = r"(?<![A-Za-z0-9_.])(?P<alias>[A-Za-z_][A-Za-z0-9_]*\.)?{column}\b\s*"
 _CLAUSE_KEYWORD_RE = re.compile(
     r"\bwhere\b|\bgroup\s+by\b|\bhaving\b|\border\s+by\b|\blimit\b", re.IGNORECASE
@@ -50,23 +52,30 @@ def enforce_metric_filters(question: str, sql: str) -> tuple[str, dict | None]:
     if metric is None:
         return sql, None
 
+    original_sql = sql
     record = {
         "metric": metric["name"],
         "required_filters": [flt["sql"] for flt in metric["required_filters"]],
         "changed": False,
         "actions": [],
     }
-    if not _references_table(sql, metric["table"]):
-        record["actions"].append(
-            {"type": "skipped", "detail": f"SQL 未引用 {metric['table']} 表，未注入"}
-        )
-        return sql, record
+    try:
+        if not _references_table(sql, metric["table"]):
+            record["actions"].append(
+                {"type": "skipped", "detail": f"SQL 未引用 {metric['table']} 表，未注入"}
+            )
+            return sql, record
 
-    for flt in metric["required_filters"]:
-        sql, actions = _ensure_filter(sql, flt)
-        record["actions"].extend(actions)
-        if any(action["type"] in ("added", "conflict_replaced") for action in actions):
-            record["changed"] = True
+        for flt in metric["required_filters"]:
+            sql, actions = _ensure_filter(sql, flt)
+            record["actions"].extend(actions)
+            if any(action["type"] in ("added", "conflict_replaced") for action in actions):
+                record["changed"] = True
+    except SqlScanError as exc:
+        # 判读不懂就不动：还原处理前的 SQL，痕迹只留一条 skipped
+        return original_sql, {**record, "changed": False, "actions": [
+            {"type": "skipped", "detail": f"SQL 文本读不懂（{exc}），未注入"}
+        ]}
     return sql, record
 
 
@@ -143,57 +152,10 @@ def _iter_predicates(sql: str, flt: dict):
 
 def _references_table(sql: str, table: str) -> bool:
     """SQL 是否引用了该表（FROM/JOIN 之后直接出现表名，允许 schema.表 前缀）。"""
-    masked = _mask_sql(sql)
+    masked = mask_sql(sql)
     return bool(
         re.search(rf"\b(?:from|join)\s+(?:\w+\.)?{re.escape(table)}\b", masked, re.IGNORECASE)
     )
-
-
-def _mask_sql(sql: str) -> str:
-    """把字符串字面量、引号标识符、注释遮成等长空格；位置与原文一一对应。"""
-    out = list(sql)
-    i, n = 0, len(sql)
-    while i < n:
-        ch = sql[i]
-        if ch in ("'", '"', "`"):
-            j = i + 1
-            while j < n:
-                if sql[j] == ch:
-                    if j + 1 < n and sql[j + 1] == ch:
-                        j += 2
-                        continue
-                    j += 1
-                    break
-                j += 1
-            else:
-                break  # 引号未闭合：不遮，交给下游 guard 处理
-            for k in range(i, j):
-                if sql[k] not in " \t\n\r":
-                    out[k] = " "
-            i = j
-        elif ch == "[":
-            j = sql.find("]", i + 1)
-            if j == -1:
-                break
-            for k in range(i, j + 1):
-                out[k] = " "
-            i = j + 1
-        elif ch == "-" and sql.startswith("--", i):
-            j = sql.find("\n", i)
-            j = n if j == -1 else j
-            for k in range(i, j):
-                out[k] = " "
-            i = j
-        elif ch == "/" and sql.startswith("/*", i):
-            j = sql.find("*/", i + 2)
-            if j == -1:
-                break
-            for k in range(i, j + 2):
-                out[k] = " "
-            i = j + 2
-        else:
-            i += 1
-    return "".join(out)
 
 
 def _token_depths(masked: str) -> list[int]:
@@ -214,7 +176,7 @@ def _append_where_condition(sql: str, fragment: str) -> str | None:
 
     返回 None 表示找不到安全的插入点（如 WHERE 后接的是括号残片），调用方应保持原样。
     """
-    masked = _mask_sql(sql)
+    masked = mask_sql(sql)
     depths = _token_depths(masked)
     tokens = [
         (m.start(), m.end(), m.group(0))

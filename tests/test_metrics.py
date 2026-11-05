@@ -149,3 +149,17 @@ def test_record_carries_metric_and_required_filters():
     _, record = enforce_metric_filters("销售额是多少", "SELECT sum(amount) FROM orders")
     assert record["metric"] == "销售额"
     assert record["required_filters"] == ["status = 'paid'"]
+
+
+def test_unparseable_sql_is_never_injected():
+    """统一口径：引号未闭合=整句读不懂，不注入、原 SQL 一字不动。
+
+    合并前 metrics 的遮罩对未闭合引号"不遮"，会在半坏 SQL 里照样补条件；
+    这类 SQL 最终必然被 guard 拦成 malformed_sql，端到端状态不变，
+    但 enforcement 不该留"改了坏 SQL"的脏痕迹。
+    """
+    sql = "SELECT sum(amount) FROM orders WHERE note='oops"
+    out, record = enforce_metric_filters("销售额是多少", sql)
+    assert out == sql
+    assert record["changed"] is False
+    assert _types(record) == ["skipped"]

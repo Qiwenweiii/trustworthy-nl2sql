@@ -19,6 +19,8 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
+from .sql_text import SqlScanError, protected_spans
+
 # 抽样条数上限：演示库单月 160 行，够判出取值形态，又不会拖慢链路。
 _SAMPLE_LIMIT = 200
 
@@ -118,7 +120,16 @@ def fix_time_boundaries(sql: str, *, db_path: Path) -> tuple[str, dict | None]:
     """
     if not sql:
         return sql, None
-    predicates = _iter_predicates(sql)
+    try:
+        predicates = _iter_predicates(sql)
+    except SqlScanError as exc:
+        # 统一口径（见 sql_text）：引号/注释未闭合=整句读不懂，一个谓词都不改
+        return sql, {
+            "changed": False,
+            "actions": [
+                {"type": "skipped", "detail": f"SQL 文本读不懂（{exc}），未做时间边界修正"}
+            ],
+        }
     if not predicates:
         return sql, None
 
@@ -141,9 +152,12 @@ def fix_time_boundaries(sql: str, *, db_path: Path) -> tuple[str, dict | None]:
 
 
 def _iter_predicates(sql: str) -> list[dict]:
-    """找出 BETWEEN 闭区间与 `<=` 两类上界谓词；字符串/注释里的假谓词、被函数包裹的列都不算。"""
+    """找出 BETWEEN 闭区间与 `<=` 两类上界谓词；字符串/注释里的假谓词、被函数包裹的列都不算。
+
+    protected_spans 扫不出（引号/注释未闭合）时向调用方抛 SqlScanError。
+    """
     found: list[dict] = []
-    protected = _protected_spans(sql)
+    protected = protected_spans(sql)
     for pattern, op in ((_BETWEEN_RE, "between"), (_LTE_RE, "lte")):
         for match in pattern.finditer(sql):
             # 位置按整段左端算：带别名时列名前面是 `o.` 的点，不是谓词起点
@@ -310,52 +324,6 @@ def _sample_values(conn, table: str, column: str) -> list | None:
 def _referenced_tables(sql: str) -> list[tuple[str, str | None]]:
     """FROM/JOIN 之后的 (表名, 别名) 清单；没写别名时别名为 None。"""
     return [(match.group(1), match.group(2)) for match in _FROM_JOIN_RE.finditer(sql)]
-
-
-def _protected_spans(sql: str) -> list[tuple[int, int]]:
-    """字符串字面量、引号标识符、注释的区间：出现在这些位置里的"列名"不是真谓词。"""
-    spans: list[tuple[int, int]] = []
-    i, n = 0, len(sql)
-    while i < n:
-        ch = sql[i]
-        if ch in ("'", '"', "`"):
-            j = i + 1
-            while j < n:
-                if sql[j] == ch:
-                    if j + 1 < n and sql[j + 1] == ch:
-                        j += 2
-                        continue
-                    j += 1
-                    break
-                j += 1
-            if j >= n:
-                # 引号未闭合：后面整段都当保护区，宁可不改
-                spans.append((i, n))
-                break
-            spans.append((i, j))
-            i = j
-        elif ch == "[":
-            j = sql.find("]", i + 1)
-            if j == -1:
-                spans.append((i, n))
-                break
-            spans.append((i, j + 1))
-            i = j + 1
-        elif ch == "-" and sql.startswith("--", i):
-            j = sql.find("\n", i)
-            j = n if j == -1 else j
-            spans.append((i, j))
-            i = j
-        elif ch == "/" and sql.startswith("/*", i):
-            j = sql.find("*/", i + 2)
-            if j == -1:
-                spans.append((i, n))
-                break
-            spans.append((i, j + 2))
-            i = j + 2
-        else:
-            i += 1
-    return spans
 
 
 def _in_spans(spans: list[tuple[int, int]], pos: int) -> bool:

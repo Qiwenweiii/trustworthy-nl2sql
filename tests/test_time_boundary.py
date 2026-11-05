@@ -277,3 +277,16 @@ def test_no_time_predicate_does_not_open_db(time_db, tmp_path):
     sql = "SELECT count(*) AS n FROM orders"
     assert fix_time_boundaries(sql, db_path=tmp_path / "nope.db") == (sql, None)
     assert fix_time_boundaries("", db_path=time_db) == ("", None)
+
+
+def test_unclosed_quote_anywhere_blocks_all_rewriting(time_db):
+    """统一口径：句中出现未闭合引号即整句判读不懂，连前面的 BETWEEN 也不改。
+
+    合并前只有引号之后的区间受保护，位于引号之前的合法谓词照常被改写；
+    两条口径都到不了执行（guard 必拦 malformed_sql），统一后痕迹只剩 skipped。
+    """
+    sql = SEPT_BETWEEN + " AND note='oops"
+    out, record = fix_time_boundaries(sql, db_path=time_db)
+    assert out == sql
+    assert record["changed"] is False
+    assert _types(record) == ["skipped"]
