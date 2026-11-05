@@ -144,12 +144,13 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 ## sql_text — `services/sql_text.py`
 
-SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先 metrics / time_boundary / sql_guard 各自养的扫描循环合并到这里（`_scan_segments` :47 认出字符串、引号标识符、方括号标识符、行注释、块注释）。
+SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先 metrics / time_boundary / sql_guard 各自养的扫描循环合并到这里（`_scan_segments` :53 认出字符串、引号标识符、方括号标识符、行注释、块注释）；二期 2c 又把 time_boundary 里的通用文本工具下沉过来。
 
-- `mask_sql(sql) -> str`（:86）—— 等长空格遮罩（引号内空白保留），metrics 定位子句关键字用。
-- `protected_spans(sql) -> list[(start, end)]`（:102）—— 受保护区间清单，time_boundary 跳过假谓词用。
-- `scan_views(sql) -> (structure, calls)`（:107）—— 结构/调用两份折叠视图（不保长度、位置不与原文对应），sql_guard 词法检查用。
-- `SqlScanError`（:28）—— **统一口径（用户 2026-11-05 确认）**：引号/方括号/块注释未闭合=整句判读不懂，三个投影一致抛错；消费方接到一律不动 SQL（metrics 记 `skipped`、time_boundary 记 `skipped`、guard 收敛成 `malformed_sql`）。合并前三份实现各有各的口径（不遮 / 后面整段保护 / 抛错），现在只剩这一条。
+- `mask_sql(sql) -> str`（:92）—— 等长空格遮罩（引号内空白保留），metrics 定位子句关键字用。
+- `protected_spans(sql) -> list[(start, end)]`（:108）—— 受保护区间清单，time_boundary 跳过假谓词用。
+- `scan_views(sql) -> (structure, calls)`（:113）—— 结构/调用两份折叠视图（不保长度、位置不与原文对应），sql_guard 词法检查用。
+- `in_spans(spans, pos)`（:150）/ `is_bare_column(sql, pos)`（:178，函数包裹的列不算裸列，词表 `_GROUPING_WORDS`）/ `referenced_tables(sql)`（:255，FROM/JOIN 后的 `(表名, 别名)` 清单，负向预查词表 `_NOT_ALIAS`）—— 与具体规则无关的谓词定位工具，time_boundary 消费。
+- `SqlScanError`（:34）—— **统一口径（用户 2026-11-05 确认）**：引号/方括号/块注释未闭合=整句判读不懂，三个投影一致抛错；消费方接到一律不动 SQL（metrics 记 `skipped`、time_boundary 记 `skipped`、guard 收敛成 `malformed_sql`）。合并前三份实现各有各的口径（不遮 / 后面整段保护 / 抛错），现在只剩这一条。
 
 ---
 
@@ -188,7 +189,7 @@ SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先
 
 `METRICS`（登记表在 `semantic_tables.py:22`，本模块 import 后消费）—— 指标登记表，现有销售额、订单数两条。每条记录：`name`、`synonyms`、`table`（数据表）、`time_field`（时间字段，本步只登记不校验）、`formula`（口径公式，本步只登记不校验）、`required_filters`（必需过滤条件，现只有订单范围 `status = 'paid'`，取值 `ORDER_SCOPE_PAID`，`semantic_tables.py:15`）。
 
-`match_metric(question) -> dict | None`—— 按指标名/同义词在问题里找指标（大小写不敏感），多个命中取最长词。没匹配到返回 `None`。
+`match_metric_in(text, metrics) -> dict | None`—— 按指标名/同义词在文本里找指标（大小写不敏感），多个命中取最长词。没匹配到返回 `None`。**全项目唯一的指标匹配实现**（二期 2b 去重）：本模块的 `match_metric(question)` 只是 `match_metric_in(question, METRICS)` 的薄封装，`semantic_check` 的拒答判定也 import 这同一个函数（`test_semantic_check::test_metric_matcher_is_a_single_implementation` 钉住）。
 
 `enforce_metric_filters(question, sql) -> (new_sql, enforcement | None)`—— SQL 生成后、guard 前的强制检查。
 
@@ -210,7 +211,7 @@ SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先
 
 语义层第二步·小步一：**时间边界校验**。存在的理由：K1 第 3 次失败不是字段选错，是 DATETIME 字段用了 DATE 的闭区间写法，`BETWEEN '2026-09-01' AND '2026-09-30'` 把 9 月 30 日当天带时分的订单整段漏掉。与 metrics 的分工：metrics 管"条件缺不缺"，本模块管"边界写法对不对"，两道痕迹分别记在 `enforcement` 与 `time_fix`。
 
-`fix_time_boundaries(sql, *, db_path) -> (new_sql, time_fix | None)`（time_boundary.py:114）
+`fix_time_boundaries(sql, *, db_path) -> (new_sql, time_fix | None)`（time_boundary.py:60）
 
 - 输入：SQL（指标注入**之后**的版本，所以看到 WHERE 里已经有系统补的 `status = 'paid'`）+ 演示库路径（只用来判列类型，用 `file:...?mode=ro` 只读连接）。
 - 返回：`(处理后的 SQL, 记录字典)`。SQL 里没有可识别的时间边界谓词时返回 `(原文, None)`，**这时不打开数据库**。
@@ -221,20 +222,20 @@ SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先
   - `skipped` —— 没修正并写明原因：列在 SQL 引用的表里都不存在、同名列跨表无法确定归属、别名对不上任何表、取值形态不认识、全是 NULL、库读不到（`sqlite3.Error` 兜住）、上界不是合法日期（`date.fromisoformat` 报错），或整句读不懂（引号/方括号/块注释未闭合，`sql_text.SqlScanError`——判读不懂时连库都不开）。
 - 不抛异常：数据库不可读、列/表找不到都只落成 `skipped`。改写发生在 guard 之前，修正后的 SQL 照常过静态校验与只读执行。
 
-内部怎么判"这个字段是不是 DATETIME"（`_resolve_kind` :244、`_kind_of` :271）：
+内部怎么判"这个字段是不是 DATETIME"（`_resolve_kind` :190、`_kind_of` :217）：
 
-1. 先定位列属于哪张表：`_referenced_tables` (:324) 抓 FROM/JOIN 后的 `(表名, 别名)`；谓词写了 `o.paid_at` 就按别名对表，没写别名就在 SQL 引用的表里找有这一列的——**多张表都有同名列时不猜**，直接 `skipped`。
+1. 先定位列属于哪张表：`sql_text.referenced_tables`（sql_text.py:255）抓 FROM/JOIN 后的 `(表名, 别名)`；谓词写了 `o.paid_at` 就按别名对表，没写别名就在 SQL 引用的表里找有这一列的——**多张表都有同名列时不猜**，直接 `skipped`。
 2. 列的声明类型含 `DATETIME`/`TIMESTAMP`/`TIME` -> datetime；以 `DATE` 开头 -> date（顺序不能颠倒，`DATETIME` 里也含 `DATE`）。
-3. SQLite 存日期时间的常态是声明成 `TEXT`，声明给不出信息时**抽样真实取值**（`_sample_values` :312，最多 `_SAMPLE_LIMIT` = 200 条非空值）：带 `HH:MM` 的是 datetime，只有 `YYYY-MM-DD` 的是 date，出现别的形态或非文本取值 -> unknown -> `skipped`。
+3. SQLite 存日期时间的常态是声明成 `TEXT`，声明给不出信息时**抽样真实取值**（`_sample_values` :258，最多 `_SAMPLE_LIMIT` = 200 条非空值）：带 `HH:MM` 的是 datetime，只有 `YYYY-MM-DD` 的是 date，出现别的形态或非文本取值 -> unknown -> `skipped`。
 4. 类型判定依据写进动作的 `detail`（"抽样 200 条 orders.paid_at 取值，带时分"），报告里能看到结论是怎么来的。
 
-谓词识别的三个"不动"（`_iter_predicates` :154）：
+谓词识别的三个"不动"（`_iter_predicates` :100）：
 
-- 落在字符串字面量、引号标识符、注释里的假谓词不算（`sql_text.protected_spans`，sql_text.py:102 给出保护区间；扫描抛 `SqlScanError` 即整句判读不懂，直接 `skipped`）。
-- 被函数包住的列不算（`_is_bare_column` :333）：`DATE(paid_at) BETWEEN ...` 已经是正确写法，不能二次改写；`WHERE (paid_at BETWEEN ...)` 里的左括号是分组括号，仍算裸列——靠括号前是不是 SQL 关键字区分（`_GROUPING_WORDS`）。
+- 落在字符串字面量、引号标识符、注释里的假谓词不算（`sql_text.protected_spans`，sql_text.py:108 给出保护区间；扫描抛 `SqlScanError` 即整句判读不懂，直接 `skipped`）。
+- 被函数包住的列不算（`sql_text.is_bare_column`，sql_text.py:178）：`DATE(paid_at) BETWEEN ...` 已经是正确写法，不能二次改写；`WHERE (paid_at BETWEEN ...)` 里的左括号是分组括号，仍算裸列——靠括号前是不是 SQL 关键字区分（`_GROUPING_WORDS`）。
 - 只认闭区间上界：`BETWEEN` 的上界和 `<=`。`<` 本来就排他、`>=` 是下界，都不在射程内，系统不代替模型改口径。
 
-一处代价要说明：谓词正则直接扫原文（同 metrics 的取舍），极端情况（字面量里恰好出现 `paid_at BETWEEN '...' AND '...'`）可能误判，演示范围接受。表名/列名取自 SQL 文本，只用于拼只读查询的标识符，并按双引号转义（`_quote` :379）。
+一处代价要说明：谓词正则直接扫原文（同 metrics 的取舍），极端情况（字面量里恰好出现 `paid_at BETWEEN '...' AND '...'`）可能误判，演示范围接受。表名/列名取自 SQL 文本，只用于拼只读查询的标识符，并按双引号转义（`_quote` :275）。
 
 **方向性说明**：这道修正只会"把范围放宽到用户本来想要的整月"，不会缩窄。即使把 DATE 列误判成 datetime（比如 `FROM a, b` 逗号连接没被识别、取错了表），`col >= '2026-09-01' AND col < '2026-10-01'` 对纯日期取值与 BETWEEN 完全等价，结果不变。
 
@@ -242,7 +243,7 @@ SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先
 
 ## semantic_check — `services/semantic_check.py`
 
-`check_question(question, *, metrics=None, dimensions=None) -> dict`（semantic_check.py:156）—— 生成 SQL 之前的语义拒答判定。**纯函数**：只读问题文本和两份静态登记表，不调模型、不连数据库，所以能单测（`tests/test_semantic_check.py` 直接拿 `problems/eval_cases.json` 的 9 条非注入用例问题文本核对）。
+`check_question(question, *, metrics=None, dimensions=None) -> dict`（semantic_check.py:157）—— 生成 SQL 之前的语义拒答判定。**纯函数**：只读问题文本和两份静态登记表，不调模型、不连数据库，所以能单测（`tests/test_semantic_check.py` 直接拿 `problems/eval_cases.json` 的 9 条非注入用例问题文本核对）。
 
 **输入**：`question` 用户问题；`metrics` / `dimensions` 只有测试会传（构造"某维度只对某指标可用"这类替身登记表），生产路径用 `semantic_tables.py` 里的 `METRICS`（:22）与 `DIMENSIONS`（:45）。
 
@@ -258,13 +259,13 @@ SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先
 | `dimension_values` / `time_terms` / `ignored_fragments` | 三条放行规则各自放过了什么，留痕给 debug 用，不参与拒答 |
 | `message` | 拒答文案，点名缺哪个词 + 列出当前支持的指标与维度；放行时为 `None` |
 
-**判据是反向覆盖，不是正向匹配**：词表把问题"涂色"（最长优先），没被涂到的连续片段就是缺口。R3「上个月新客销售额」能正常匹配到指标「销售额」，所以只看"有没有匹配到指标"永远抓不到它——缺口在残片里。词表来源（都在 `semantic_tables.py`）：指标别名（`METRICS`，:22）、口径词 `CALIBER_ALIASES`（:102，来自销售额定义里已有的含税/不含税两种算法）、维度别名与枚举取值（`DIMENSIONS`，:45）、时间表达 `TIME_PHRASES`（:117）/`TIME_PATTERNS`（:123）、业务对象与语法词 `ENTITY_NOUNS`（:106）/`GRAMMAR_WORDS`（:108）。
+**判据是反向覆盖，不是正向匹配**：词表把问题"涂色"（最长优先），没被涂到的连续片段就是缺口。R3「上个月新客销售额」能正常匹配到指标「销售额」，所以只看"有没有匹配到指标"永远抓不到它——缺口在残片里。词表来源（都在 `semantic_tables.py`）：指标别名（`METRICS`，:22）、口径词 `CALIBER_ALIASES`（:102，来自销售额定义里已有的含税/不含税两种算法）、维度别名与枚举取值（`DIMENSIONS`，:45）、时间表达 `TIME_PHRASES`（:117）/`TIME_PATTERNS`（:123）、业务对象与语法词 `ENTITY_NOUNS`（:106）/`GRAMMAR_WORDS`（:108）。指标匹配（`match_metric_in`）不自建实现，import 自 `services/metrics.py`——拒答与强制注入共用同一份判据（二期 2b 去重，见 metrics 模块小节）。
 
-**三条放行规则**（`_residue_runs` :77 之后逐段判，宁可放过不误杀）：残片等于某个已登记的枚举取值放过；残片与维度别名紧邻（`_touches_dimension` :98，"抖音渠道"里的"抖音"）当取值放过——取值合不合法属于下一步的"维度取值校验"，本步不管；整段残片的每个字都落在 `TIME_HINT_CHARS`（semantic_tables.py:132）里就当时间表达放过（`前三个月`、`过去半年`、`今年以来`）。收紧到"整段都像时间"而不是"沾一个时间字符就放"，否则「月度环比」会一起漏过去。单字残片（口语尾巴"怎么样"剩下的"样"）只进 `ignored_fragments`，不做拒答依据。
+**三条放行规则**（`_residue_runs` :78 之后逐段判，宁可放过不误杀）：残片等于某个已登记的枚举取值放过；残片与维度别名紧邻（`_touches_dimension` :99，"抖音渠道"里的"抖音"）当取值放过——取值合不合法属于下一步的"维度取值校验"，本步不管；整段残片的每个字都落在 `TIME_HINT_CHARS`（semantic_tables.py:132）里就当时间表达放过（`前三个月`、`过去半年`、`今年以来`）。收紧到"整段都像时间"而不是"沾一个时间字符就放"，否则「月度环比」会一起漏过去。单字残片（口语尾巴"怎么样"剩下的"样"）只进 `ignored_fragments`，不做拒答依据。
 
 **不抛异常**：判不出缺口就放行；唯一例外是空问题，返回 `allowed=False` + `empty_question`。
 
-`supported_dimensions(metric_name)`（:108）—— 某指标支持的维度清单，从 `DIMENSIONS` 按 `applies_to` 反查。**维度只有一张登记表**，`METRICS` 里不另存维度清单，所以加维度只改一处、不可能两处不一致；`tests/test_semantic_check.py` 还双向核对"登记的列必须存在于 `COLUMN_NOTES`""能当维度的列必须已登记"。
+`supported_dimensions(metric_name)`（:109）—— 某指标支持的维度清单，从 `DIMENSIONS` 按 `applies_to` 反查。**维度只有一张登记表**，`METRICS` 里不另存维度清单，所以加维度只改一处、不可能两处不一致；`tests/test_semantic_check.py` 还双向核对"登记的列必须存在于 `COLUMN_NOTES`""能当维度的列必须已登记"。
 
 ## graph — `src/data_agent/graph/`
 
