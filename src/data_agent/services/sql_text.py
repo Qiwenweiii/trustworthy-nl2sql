@@ -8,12 +8,18 @@
 - protected_spans：受保护区间清单，区间起点的假谓词一律跳过（time_boundary 用）
 - scan_views：结构/调用两份折叠视图，位置不与原文对应（sql_guard 用）
 
+另备一组与具体规则无关的文本工具（二期 2c 从 time_boundary 下沉）：
+`in_spans`、`is_bare_column`（函数包裹的列不算裸列）、`referenced_tables`
+（FROM/JOIN 后的表名与别名清单）。
+
 统一口径（用户 2026-11-05 确认）：未闭合引号/标识符/注释 = 整句判读不懂，
 抛 SqlScanError，消费方接到即"不动 SQL"——metrics 记 skipped 不注入、
 time_boundary 记 skipped 不修正、guard 收敛成 malformed_sql 拦下。
 """
 
 from __future__ import annotations
+
+import re
 
 # 分段类型
 _STRING = "string"  # '...' 字符串字面量
@@ -134,3 +140,118 @@ def scan_views(sql: str) -> tuple[str, str]:
     structure.append(sql[pos:])
     calls.append(sql[pos:])
     return "".join(structure), "".join(calls)
+
+
+# ---------------------------------------------------------------------------
+# 谓词定位用的通用文本工具（二期 2c 从 time_boundary 下沉：与"时间边界"无关，
+# 任何要做文本级 SQL 手术的模块都用得上）
+
+
+def in_spans(spans: list[tuple[int, int]], pos: int) -> bool:
+    """位置 pos 是否落在某个 [start, end) 区间里。"""
+    return any(start <= pos < end for start, end in spans)
+
+
+# 能出现在分组左括号前面的关键字（`WHERE (col BETWEEN ...)` 里的列仍是裸列）
+_GROUPING_WORDS = frozenset(
+    {
+        "and",
+        "by",
+        "case",
+        "else",
+        "exists",
+        "from",
+        "having",
+        "in",
+        "is",
+        "not",
+        "on",
+        "or",
+        "select",
+        "then",
+        "when",
+        "where",
+    }
+)
+
+
+def is_bare_column(sql: str, pos: int) -> bool:
+    """列左边只能是谓词起始位置：`DATE(paid_at)` 这类函数包裹的列不算裸列。
+
+    WHERE / AND 这类关键词与列之间隔着空白，不算"更长的标识符"，要放行；
+    紧贴列的字母/点（`x.paid_at`、`xpaid_at`）才说明这里不是裸列起点。
+    """
+    prev = _prev_char(sql, pos)
+    if prev is None:
+        return True
+    index, ch, detached = prev
+    if ch == ")":
+        return False
+    if ch == "(":
+        word = _word_before(sql, index)
+        return word is None or word.lower() in _GROUPING_WORDS
+    return detached or not (ch.isalnum() or ch in "_.")
+
+
+def _prev_char(sql: str, pos: int) -> tuple[int, str, bool] | None:
+    """pos 之前最近的非空白字符，返回 (下标, 字符, 中间是否隔了空白)；到串头返回 None。"""
+    i = pos - 1
+    detached = False
+    while i >= 0 and sql[i] in " \t\r\n":
+        i -= 1
+        detached = True
+    if i < 0:
+        return None
+    return i, sql[i], detached
+
+
+def _word_before(text: str, pos: int) -> str | None:
+    """取 pos 之前紧邻的那个单词（跨空白）；没有单词时返回 None。"""
+    i = pos - 1
+    while i >= 0 and text[i] in " \t\r\n":
+        i -= 1
+    end = i + 1
+    while i >= 0 and (text[i].isalnum() or text[i] == "_"):
+        i -= 1
+    return text[i + 1 : end] or None
+
+
+# 表名后面紧跟这些词时不是别名；用负向预查挡掉，才不会把下一个 JOIN 关键字一起吃掉
+_NOT_ALIAS = frozenset(
+    {
+        "and",
+        "as",
+        "cross",
+        "full",
+        "group",
+        "having",
+        "inner",
+        "join",
+        "left",
+        "limit",
+        "natural",
+        "not",
+        "on",
+        "or",
+        "order",
+        "outer",
+        "right",
+        "select",
+        "union",
+        "using",
+        "values",
+        "where",
+    }
+)
+_FROM_JOIN_RE = re.compile(
+    r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    r"(?:\s+(?:as\s+)?(?!(?:{})\b)([A-Za-z_][A-Za-z0-9_]*))?".format(
+        "|".join(sorted(_NOT_ALIAS))
+    ),
+    re.IGNORECASE,
+)
+
+
+def referenced_tables(sql: str) -> list[tuple[str, str | None]]:
+    """FROM/JOIN 之后的 (表名, 别名) 清单；没写别名时别名为 None。"""
+    return [(match.group(1), match.group(2)) for match in _FROM_JOIN_RE.finditer(sql)]

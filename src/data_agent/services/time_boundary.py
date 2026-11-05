@@ -19,7 +19,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from .sql_text import SqlScanError, protected_spans
+from .sql_text import SqlScanError, in_spans, is_bare_column, protected_spans, referenced_tables
 
 # 抽样条数上限：演示库单月 160 行，够判出取值形态，又不会拖慢链路。
 _SAMPLE_LIMIT = 200
@@ -53,62 +53,8 @@ _LTE_RE = re.compile(
     + r"(?P<upper>" + _DATE_TEXT + r")"
     + r"(?P<upper_time>" + _TIME_TEXT + r")'"
 )
-
-# 表名后面紧跟这些词时不是别名；用负向预查挡掉，才不会把下一个 JOIN 关键字一起吃掉
-_NOT_ALIAS = frozenset(
-    {
-        "and",
-        "as",
-        "cross",
-        "full",
-        "group",
-        "having",
-        "inner",
-        "join",
-        "left",
-        "limit",
-        "natural",
-        "not",
-        "on",
-        "or",
-        "order",
-        "outer",
-        "right",
-        "select",
-        "union",
-        "using",
-        "values",
-        "where",
-    }
-)
-_FROM_JOIN_RE = re.compile(
-    r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)"
-    r"(?:\s+(?:as\s+)?(?!(?:{})\b)([A-Za-z_][A-Za-z0-9_]*))?".format(
-        "|".join(sorted(_NOT_ALIAS))
-    ),
-    re.IGNORECASE,
-)
-# 能出现在分组左括号前面的关键字（`WHERE (col BETWEEN ...)` 里的列仍是裸列）
-_GROUPING_WORDS = frozenset(
-    {
-        "and",
-        "by",
-        "case",
-        "else",
-        "exists",
-        "from",
-        "having",
-        "in",
-        "is",
-        "not",
-        "on",
-        "or",
-        "select",
-        "then",
-        "when",
-        "where",
-    }
-)
+# 谓词左边的裸列判定、FROM/JOIN 别名解析、保护区间判断都在 sql_text（二期 2c 下沉），
+# 本模块只留"时间边界"本身的规则。
 
 
 def fix_time_boundaries(sql: str, *, db_path: Path) -> tuple[str, dict | None]:
@@ -134,7 +80,7 @@ def fix_time_boundaries(sql: str, *, db_path: Path) -> tuple[str, dict | None]:
         return sql, None
 
     record: dict = {"changed": False, "actions": []}
-    tables = _referenced_tables(sql)
+    tables = referenced_tables(sql)
     try:
         with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
             rewrites = _plan_rewrites(predicates, tables, conn, record["actions"])
@@ -162,7 +108,7 @@ def _iter_predicates(sql: str) -> list[dict]:
         for match in pattern.finditer(sql):
             # 位置按整段左端算：带别名时列名前面是 `o.` 的点，不是谓词起点
             lhs_at = match.start()
-            if _in_spans(protected, lhs_at) or not _is_bare_column(sql, lhs_at):
+            if in_spans(protected, lhs_at) or not is_bare_column(sql, lhs_at):
                 continue
             groups = match.groupdict()
             found.append(
@@ -319,56 +265,6 @@ def _sample_values(conn, table: str, column: str) -> list | None:
         return [row[0] for row in conn.execute(query)]
     except sqlite3.Error:
         return None
-
-
-def _referenced_tables(sql: str) -> list[tuple[str, str | None]]:
-    """FROM/JOIN 之后的 (表名, 别名) 清单；没写别名时别名为 None。"""
-    return [(match.group(1), match.group(2)) for match in _FROM_JOIN_RE.finditer(sql)]
-
-
-def _in_spans(spans: list[tuple[int, int]], pos: int) -> bool:
-    return any(start <= pos < end for start, end in spans)
-
-
-def _is_bare_column(sql: str, pos: int) -> bool:
-    """列左边只能是谓词起始位置：`DATE(paid_at)` 这类函数包裹的列不动。
-
-    WHERE / AND 这类关键词与列之间隔着空白，不算"更长的标识符"，要放行；
-    紧贴列的字母/点（`x.paid_at`、`xpaid_at`）才说明这里不是裸列起点。
-    """
-    prev = _prev_char(sql, pos)
-    if prev is None:
-        return True
-    index, ch, detached = prev
-    if ch == ")":
-        return False
-    if ch == "(":
-        word = _word_before(sql, index)
-        return word is None or word.lower() in _GROUPING_WORDS
-    return detached or not (ch.isalnum() or ch in "_.")
-
-
-def _prev_char(sql: str, pos: int) -> tuple[int, str, bool] | None:
-    """pos 之前最近的非空白字符，返回 (下标, 字符, 中间是否隔了空白)；到串头返回 None。"""
-    i = pos - 1
-    detached = False
-    while i >= 0 and sql[i] in " \t\r\n":
-        i -= 1
-        detached = True
-    if i < 0:
-        return None
-    return i, sql[i], detached
-
-
-def _word_before(text: str, pos: int) -> str | None:
-    """取 pos 之前紧邻的那个单词（跨空白）；没有单词时返回 None。"""
-    i = pos - 1
-    while i >= 0 and text[i] in " \t\r\n":
-        i -= 1
-    end = i + 1
-    while i >= 0 and (text[i].isalnum() or text[i] == "_"):
-        i -= 1
-    return text[i + 1 : end] or None
 
 
 def _next_day(day: str) -> str:
