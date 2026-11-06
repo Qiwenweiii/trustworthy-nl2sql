@@ -85,10 +85,10 @@ def test_real_case_file_loads() -> None:
     assert {
         "S1", "S2", "K1", "K2", "K3", "E1", "E2", "E3", "R1", "R2", "R3",
     } <= ids
-    # 阶段账目：v0/v1 已承诺 done；v2（golden set 基线）pending，不进 --all 退出码
+    # 阶段账目：v0/v1/v2 均已毕业 done（v2 于 2026-11-06 两轮全绿+挂账豁免后转 done），失败进 --all 退出码
     assert meta["stages"]["v0"]["status"] == "done"
     assert meta["stages"]["v1"]["status"] == "done"
-    assert meta["stages"]["v2"]["status"] == "pending"
+    assert meta["stages"]["v2"]["status"] == "done"
     assert {case["id"] for case in cases if case["stage"] == "v0"} == {
         "S1", "S2", "A1", "A2", "A3", "A4", "A5", "A6"
     }
