@@ -80,25 +80,25 @@ def _write_cases(tmp_path: Path, cases: list[dict], meta: dict | None = META) ->
 def test_real_case_file_loads() -> None:
     meta, cases = judge.load_cases(CASES_PATH)
     assert meta["anchor_today"] == "2026-10-30"
-    assert len(cases) == meta["cases"] == 11
-    assert [case["id"] for case in cases] == [
-        "S1",
-        "S2",
-        "K1",
-        "K2",
-        "K3",
-        "E1",
-        "E2",
-        "E3",
-        "R1",
-        "R2",
-        "R3",
-    ]
-    # 阶段账目：v0 与 v1 都已承诺（v1 于 2026-11-04 转 done），且只含安全两条挂 v0
+    assert len(cases) == meta["cases"] == 57
+    ids = {case["id"] for case in cases}
+    assert {
+        "S1", "S2", "K1", "K2", "K3", "E1", "E2", "E3", "R1", "R2", "R3",
+    } <= ids
+    # 阶段账目：v0/v1 已承诺 done；v2（golden set 基线）pending，不进 --all 退出码
     assert meta["stages"]["v0"]["status"] == "done"
     assert meta["stages"]["v1"]["status"] == "done"
-    assert {case["id"] for case in cases if case["stage"] == "v0"} == {"S1", "S2"}
-    assert all(case["stage"] == "v1" for case in cases if case["id"] not in {"S1", "S2"})
+    assert meta["stages"]["v2"]["status"] == "pending"
+    assert {case["id"] for case in cases if case["stage"] == "v0"} == {
+        "S1", "S2", "A1", "A2", "A3", "A4", "A5", "A6"
+    }
+    assert {case["id"] for case in cases if case["stage"] == "v1"} == {
+        "K1", "K2", "K3", "E1", "E2", "E3", "R1", "R2", "R3"
+    }
+    assert len([case for case in cases if case["stage"] == "v2"]) == 40
+    for case in cases:
+        if case.get("injected_sql"):
+            assert case["deterministic"]
     # 失败预设分类必须已删干净
     for case in cases:
         assert "failure_type" not in case

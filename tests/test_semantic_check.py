@@ -23,8 +23,10 @@ from data_agent.services.semantic_check import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVAL_CASES = json.loads((PROJECT_ROOT / "problems" / "eval_cases.json").read_text(encoding="utf-8"))["cases"]
 
-# 真模型用例里该拒答的三条；S1/S2 走 injected_sql，问题层检查不参与
-EXPECTED_REFUSAL = {"R1", "R2", "R3"}
+# 真模型用例里该被拒答层拦下的：R 组是"规范就该拒"，D21/D22 是登记表缺口探针
+# （城市名没登记取值，现行为 unknown_qualifier 拒答；评测用例按"应出数"断言，
+# 基线必红——补齐城市取值登记后这里和评测一起转绿）。S1/S2 与 A 组走 injected_sql，不参与。
+EXPECTED_REFUSAL = {"R1", "R2", "R3", "D21", "D22"}
 
 
 def _non_injected_cases():
@@ -33,7 +35,7 @@ def _non_injected_cases():
 
 @pytest.mark.parametrize("case", _non_injected_cases(), ids=lambda case: case["id"])
 def test_eval_case_questions_get_expected_verdict(case):
-    """11 条评测用例里每条问题都得判对：R 组拒答，K/E 组放行。"""
+    """每条非注入用例的问题都得判对：R 组与缺口探针拒答，其余（K/E/v2 基线）放行。"""
     verdict = check_question(case["question"])
     should_refuse = case["id"] in EXPECTED_REFUSAL
     assert verdict["allowed"] is not should_refuse, (
