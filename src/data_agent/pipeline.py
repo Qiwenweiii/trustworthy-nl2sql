@@ -9,6 +9,7 @@ outcome 的字段是评测契约，见 README。
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -39,6 +40,7 @@ def ask(
     today: date | None = None,
     injected_sql: str | None = None,
     debug: bool = False,
+    tracer: Callable[[str, object], None] | None = None,
 ) -> dict:
     """执行一次问数全链路，返回带 status/guard/result 的 outcome 字典。
 
@@ -57,10 +59,13 @@ def ask(
     再问模型，修好的 SQL 重走注入/时间修正/guard/执行全套安检；最多一次，
     timeout 与 injected_sql 复放通道不回炉。现场记在 outcome["retry"]。
     debug 为 True 时把每一步的输入/输出各打成一行 stderr，不影响返回值与业务逻辑。
+    tracer 非空时接管这些 trace 记录点（label, value 与 debug 输出一字不差），
+    供 Web 壳直播阶段进度；tracer 与 debug 同时给时 tracer 优先，
+    回调抛出的异常由调用方负责。
     """
     started = time.monotonic()
     outcome = new_outcome(question)
-    trace = make_tracer(debug)
+    trace = tracer if tracer is not None else make_tracer(debug)
     trace("question", question)
 
     # 语义层拒答检查：拒答发生在模型调用之前，拒了就到此为止（详见 pipeline_steps 各步函数）
