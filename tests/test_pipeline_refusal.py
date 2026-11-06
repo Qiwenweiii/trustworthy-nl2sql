@@ -24,6 +24,7 @@ CONTRACT_KEYS = {
     "error",
     "llm_response",
     "caliber_note",
+    "retry",
     "elapsed_ms",
 }
 
@@ -88,6 +89,7 @@ def test_refusal_outcome_shape_keeps_the_contract(demo_db):
     assert outcome["time_fix"] is None
     assert outcome["result"] is None
     assert outcome["caliber_note"] is None
+    assert outcome["retry"] is None  # 拒答发生在调模型之前，回炉字段同样为空
     assert outcome["status"] in STATUSES
 
 

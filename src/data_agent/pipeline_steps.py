@@ -21,6 +21,7 @@ from .services.metrics import enforce_metric_filters
 from .services.schema import describe_schema
 from .services.sql_guard import check_sql
 from .services.time_boundary import fix_time_boundaries
+from .prompts import RETRY_PROMPT
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ def new_outcome(question: str) -> dict:
         "error": None,
         "llm_response": None,
         "caliber_note": None,
+        "retry": None,
         "elapsed_ms": 0.0,
     }
 
@@ -223,3 +225,69 @@ def execute(
             raw = outcome["llm_response"]
             outcome["llm_response"] = f"{raw}\n{notice}" if raw else notice
             trace("exec", f"empty_result=True | {notice}")
+
+
+def retry_after_error(
+    question: str,
+    outcome: dict,
+    trace,
+    *,
+    generator: SqlGenerator,
+    db_path: Path,
+    today: date | None,
+    failed_sql: str,
+    db_error: str,
+    max_rows: int,
+    timeout_s: float,
+) -> None:
+    """报错回炉：把闯祸 SQL 和数据库报错原文拼回问题，请模型修一次（只此一次）。
+
+    修好的 SQL 没有豁免权：指标注入、时间修正、静态校验、只读执行全部重走一遍，
+    终态落在 outcome 的原有字段上（sql/guard/enforcement/time_fix/result/error 反映
+    的是最后一次处理）；第一次的现场保存在 outcome["retry"] 里。
+    回炉调用模型本身失败（llm_error）或模型拒绝修改（NO_SQL）时不叠加新错误，
+    终态保持第一次的 exec_error，retry["result"] 记录回炉的死因。
+    """
+    retry = {
+        "attempted": True,
+        "failed_sql": failed_sql,
+        "db_error": db_error,
+        "regenerated_sql": None,
+        "result": None,
+    }
+    outcome["retry"] = retry
+
+    repair_question = (
+        RETRY_PROMPT.replace("{question}", question)
+        .replace("{failed_sql}", failed_sql)
+        .replace("{db_error}", db_error)
+    )
+    schema_text = describe_schema(db_path)
+    run_date = today or date.today()
+    trace("retry", f"回炉一次 | failed_sql={failed_sql} | db_error={db_error}")
+    try:
+        fixed = generator(repair_question, schema_text, run_date)
+    except Exception as exc:  # 回炉调用本身挂了：终态保持第一次的 exec_error
+        retry["result"] = "llm_error"
+        trace("retry", f"repair_llm_error | {exc} | 终态保持 {outcome['status']}")
+        return
+    if fixed.sql is None:
+        retry["result"] = "no_sql"
+        trace("retry", f"模型拒绝修改（NO_SQL） | 终态保持 {outcome['status']}")
+        return
+
+    retry["regenerated_sql"] = fixed.sql
+    outcome["llm_response"] = fixed.raw_response
+    outcome["caliber_note"] = fixed.caliber_note
+    sql = enforce_metrics(question, fixed.sql, outcome, trace)
+    sql = fix_time(sql, db_path, outcome, trace)
+    guarded = run_guard(sql, outcome, trace)
+    if guarded is None:
+        retry["result"] = "blocked"
+        outcome["error"] = None  # blocked 的终态不带执行错误；第一次的报错在 retry 里可查
+        return
+    execute(db_path, guarded, outcome, trace, max_rows=max_rows, timeout_s=timeout_s)
+    if outcome["status"] == "ok":
+        outcome["error"] = None  # 救回成功：抹掉第一次的 sql_error，终态自洽
+    retry["result"] = outcome["status"]
+    trace("retry", f"result={retry['result']}")

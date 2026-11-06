@@ -3,7 +3,7 @@
 v0 是给评测系统用的“靶子”，不是最终产品。链路只有一条：
 
 ```
-自然语言问题 -> 语义层拒答检查（指标/维度存不存在）-> LLM 生成 SQL -> 语义层（指标必需条件强制注入 -> 时间边界校验）-> 静态安全校验 -> SQLite 只读执行 -> 输出结果
+自然语言问题 -> 语义层拒答检查（指标/维度存不存在）-> LLM 生成 SQL -> 语义层（指标必需条件强制注入 -> 时间边界校验）-> 静态安全校验 -> SQLite 只读执行 ->（执行报错时）报错回炉一次（把报错原文带回给模型修，修好的 SQL 重走全部安检）-> 输出结果
 ```
 
 不做：口径澄清、结果校验 / 证据组装、Web、多轮会话、trace 落盘。调用链细节只在 `--debug`（或 `ask(debug=True)`）下按「一步一行」打印到 stderr，见「debug 模式」；不写库、不写文件，关闭后无任何输出。
@@ -50,6 +50,7 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | `enforcement.actions[]` | object      | 每条一个动作：`type` = `added`（缺必需条件被补上）/ `conflict_replaced`（模型写冲突取值，以指标定义为准改写，带 `from`/`to`）/ `already_present`（模型已写对，没动）/ `skipped`（未注入，`detail` 说明原因） |
 | `time_fix`          | object \| null | 语义层时间边界校验的记录 `{"changed", "actions": [...]}`；SQL 里没有可识别的时间边界谓词时为 null。`changed=true` 表示送去执行的 SQL 被系统改过边界写法（不是模型原文） |
 | `time_fix.actions[]` | object       | 每条一个动作：`type` = `boundary_rewritten`（DATETIME 字段的闭区间上界改成半开区间，带 `from`/`to`）/ `already_correct`（DATE 字段、上界已带时分：写法本来就对，没动）/ `skipped`（未修正，`detail` 说明原因：列找不到、类型判不出、库读不到、上界不是合法日期） |
+| `retry`              | object \| null | **报错回炉**（阶段 1）的痕迹：第一次执行报数据库错误时，把失败 SQL 与报错原文带回给模型修一次；没触发回炉（一次成功 / 拒答 / 超时 / 注入通道）时为 null。形状 `{"attempted": true, "failed_sql", "db_error", "regenerated_sql", "result"}`：`failed_sql`/`db_error` 是第一次的现场；`regenerated_sql` 是修复返回的 SQL（模型拒绝修改时为 null）；`result` = `ok`（救回）/ `exec_error`（修了还是错）/ `blocked`（修好的 SQL 没过安检）/ `timeout` / `no_sql`（模型拒绝修改）/ `llm_error`（回炉调用挂了）。回炉后的 SQL 重走注入/时间修正/guard/执行，`sql`/`guard`/`enforcement`/`time_fix`/`result`/`llm_response`/`caliber_note` 反映的都是**最后一次**处理；回炉最多一次，修坏的不会第三次问 |
 | `result`             | object \| null | 仅在 `status == "ok"` 时非空，见下表                                                                |
 | `result.columns`     | string[]       | 结果列名                                                                                            |
 | `result.rows`        | object[]       | 结果行，已转成 `{列名: 值}`                                                                         |
@@ -68,7 +69,7 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | 参数           | 默认     | 行为                                                                                                                                                                                                                                                          |
 | -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `today`        | 当前日期 | 基准日期，原样传进 SQL 生成器用于提示词里的“上个月”等相对时间；评测冻结为 `2026-10-30`，正常运行不传                                                                                                                                                          |
-| `injected_sql` | `None`   | 非空时跳过**问题层的语义拒答检查**（注入用例的问题文本只是标签，不是业务问题）与取 schema、模型调用，把这条 SQL 当作模型输出；SQL 层的语义检查（订单范围注入、时间边界校验）、静态校验与只读执行照常进行（**注入不绕过 guard**，缺订单范围条件同样会被补上并记进 `enforcement`，DATETIME 字段的闭区间上界同样会被改写并记进 `time_fix`），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示），`caliber_note` 同样保持 null（没有模型回复，就没有口径声明）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
+| `injected_sql` | `None`   | 非空时跳过**问题层的语义拒答检查**（注入用例的问题文本只是标签，不是业务问题）与取 schema、模型调用，把这条 SQL 当作模型输出；SQL 层的语义检查（订单范围注入、时间边界校验）、静态校验与只读执行照常进行（**注入不绕过 guard**，缺订单范围条件同样会被补上并记进 `enforcement`，DATETIME 字段的闭区间上界同样会被改写并记进 `time_fix`），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示），`caliber_note` 同样保持 null（没有模型回复，就没有口径声明）。执行报错也**不触发回炉**（那条通道没有模型可问修复，`retry` 恒为 null）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
 | `debug`        | `False`  | 为 `True` 时将链路每一步的输入/输出各打印一行到 **stderr**（格式见「debug 模式」）。仅影响打印，返回值字段与业务逻辑不变                                                                                     |
 
 `generator` 与 `injected_sql` 至少提供一个，否则抛 `ValueError`。生成器签名为 `Callable[[str, str, date], GeneratedSql]`（问题、schema 文本、基准日期）。
@@ -206,7 +207,7 @@ K1 第 3 次失败暴露的是另一侧：不是**时间字段选错**，是**DA
 pytest -q
 ```
 
-覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）、语义层订单范围注入（缺失补上 / 冲突改写 / 已写对不动 / 未匹配指标不注入，`tests/test_metrics.py` + pipeline 集成用例）、语义层时间边界校验（DATETIME 闭区间改半开区间且不改字段 / DATE 字段不动 / 上界已带时分不动 / 函数包裹与 `<` 不在射程 / 列找不到与库读不到只记 skipped 不抛错，`tests/test_time_boundary.py` + pipeline 集成用例）。语义层拒答（`tests/test_semantic_check.py` 直接读 `problems/eval_cases.json` 的 49 条非注入用例问题文本核对判定，另覆盖取值放行 / 时间残片放行 / 维度归属 / 登记表与表结构双向一致性；`tests/test_pipeline_refusal.py` 覆盖岔路：拒答时模型一次都不调、outcome 字段集合与旧契约完全一致、`injected_sql` 不拦、放行路径上注入与时间修正原位不变）是本次新增。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因；断言 `expect` 形状校验（状态词拼错、布尔/行数/规则列表/正则类型写错载入即报错，不再留到运行期静默判红），以及数值断言取第一个**数值**单元格（字符串维度列不干扰、合法的 0 不被跳过）。`tests/test_init_db.py` 把演示库钉成单测：按锚定日重建时月份窗口与行数对账、同种子两次构建逐行相等、K1 的五个九月期望值逐一核对。
+覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）、语义层订单范围注入（缺失补上 / 冲突改写 / 已写对不动 / 未匹配指标不注入，`tests/test_metrics.py` + pipeline 集成用例）、语义层时间边界校验（DATETIME 闭区间改半开区间且不改字段 / DATE 字段不动 / 上界已带时分不动 / 函数包裹与 `<` 不在射程 / 列找不到与库读不到只记 skipped 不抛错，`tests/test_time_boundary.py` + pipeline 集成用例）。语义层拒答（`tests/test_semantic_check.py` 直接读 `problems/eval_cases.json` 的 49 条非注入用例问题文本核对判定，另覆盖取值放行 / 时间残片放行 / 维度归属 / 登记表与表结构双向一致性；`tests/test_pipeline_refusal.py` 覆盖岔路：拒答时模型一次都不调、outcome 字段集合与旧契约完全一致、`injected_sql` 不拦、放行路径上注入与时间修正原位不变）是本次新增。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因；断言 `expect` 形状校验（状态词拼错、布尔/行数/规则列表/正则类型写错载入即报错，不再留到运行期静默判红），以及数值断言取第一个**数值**单元格（字符串维度列不干扰、合法的 0 不被跳过）。`tests/test_init_db.py` 把演示库钉成单测：按锚定日重建时月份窗口与行数对账、同种子两次构建逐行相等、K1 的五个九月期望值逐一核对。`tests/test_pipeline_retry.py` 覆盖阶段 1 报错回炉（回炉救回且只调两次 / 修复提示词带原问题+闯祸 SQL+报错原文 / 修好的 SQL 照样被 guard 拦下且数据未动 / 回炉后重过指标注入用的是原问题 / 修不好就认输不三顾 / 一次成功不多花调用 / 注入通道与 timeout 不回炉 / 模型拒绝修改与回炉调用挂掉都保持 exec_error 终态）。
 
 ## 评测（阶段制）
 

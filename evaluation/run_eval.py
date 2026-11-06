@@ -182,7 +182,9 @@ def run_cases(
             # enforcement 同样保留：SQL 里的订单范围条件是模型写的还是系统补的，报告要说得清；
             # time_fix 同样保留：边界写法是模型写的还是系统按字段类型改的，报告也要说得清；
             # error 同样保留：no_sql 是语义层机制拒答（type=semantic_refusal）还是模型自己拒的，
-            # aggregate 判"不可靠通过"就看这个字段
+            # aggregate 判"不可靠通过"就看这个字段；
+            # retry 同样保留（阶段 1 报错回炉）：回没回炉、修成什么样、最后救没救回来，
+            # 台账要的"重试率"就从这条字段统计；没回炉的采样这里是 null
             run = {
                 "run": run_index,
                 "status": status,
@@ -191,6 +193,7 @@ def run_cases(
                 "enforcement": outcome.get("enforcement"),
                 "time_fix": outcome.get("time_fix"),
                 "error": outcome.get("error"),
+                "retry": outcome.get("retry"),
             }
             if status in ("llm_error", "runner_crash"):
                 record["runs"].append(run)

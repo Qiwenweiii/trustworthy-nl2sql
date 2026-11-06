@@ -1,4 +1,4 @@
-"""一次问数的编排：问题 -> 语义层拒答检查 -> 生成 SQL -> 指标必需条件强制注入 -> 时间边界校验 -> 静态校验 -> 只读执行。
+"""一次问数的编排：问题 -> 语义层拒答检查 -> 生成 SQL -> 指标必需条件强制注入 -> 时间边界校验 -> 静态校验 -> 只读执行 ->（执行报错时）报错回炉一次。
 
 本文件只负责"按顺序调用、该收尾就收尾"；每一步怎么写 outcome、怎么打 debug 痕迹，
 在 pipeline_steps.py 里一函数一步。除拒答检查那一段（检查通过/拒答的岔路在 graph/
@@ -19,6 +19,7 @@ from .pipeline_steps import (
     make_tracer,
     new_outcome,
     resolve_sql,
+    retry_after_error,
     run_guard,
     run_refusal_gate,
     stamp,
@@ -52,6 +53,9 @@ def ask(
     缺失会被代码补上、冲突会被改写，处理痕迹记在 outcome["enforcement"]；
     时间边界按库里字段的真实类型校验，DATETIME 字段的闭区间上界改成半开区间，
     痕迹记在 outcome["time_fix"]（只改边界写法，不改模型选的时间字段）。
+    执行报数据库错误（exec_error）时回炉一次：失败 SQL 与报错原文拼进修复提示词
+    再问模型，修好的 SQL 重走注入/时间修正/guard/执行全套安检；最多一次，
+    timeout 与 injected_sql 复放通道不回炉。现场记在 outcome["retry"]。
     debug 为 True 时把每一步的输入/输出各打成一行 stderr，不影响返回值与业务逻辑。
     """
     started = time.monotonic()
@@ -87,4 +91,20 @@ def ask(
 
     # 只读执行 + 空结果标记
     execute(db_path, guarded, outcome, trace, max_rows=max_rows, timeout_s=query_timeout_s)
+
+    # 报错回炉（阶段 1）：执行报错时把报错原文带回给模型修一次。
+    # timeout 不回炉（重试大概率再慢一次）、injected_sql 复放通道没有模型可问，也不回炉。
+    if outcome["status"] == "exec_error" and injected_sql is None and generator is not None:
+        retry_after_error(
+            question,
+            outcome,
+            trace,
+            generator=generator,
+            db_path=db_path,
+            today=today,
+            failed_sql=guarded,
+            db_error=outcome["error"]["message"],
+            max_rows=max_rows,
+            timeout_s=query_timeout_s,
+        )
     return stamp(outcome, started)

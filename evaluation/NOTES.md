@@ -353,7 +353,8 @@ unreliable_passes[] {id, stage, category, refused, skipped_checks[]}
 
 cases[]           run_cases 的记录原样（stage / runs / failures / verdict /
                   passing_runs / decidable_runs ...）；
-                  每个 run 都带 guard、enforcement、time_fix、error；已判定的还带 refusal_accepted、skipped_checks，离线复核够用
+                  每个 run 都带 guard、enforcement、time_fix、error、retry（阶段 1 报错回炉痕迹，
+                  没回炉的采样为 null；重试率就从这里数）；已判定的还带 refusal_accepted、skipped_checks，离线复核够用
 
 run_context       {mode(stage|all), stage, stages, cases_path, db_path, db_months,
                   model, used_llm}

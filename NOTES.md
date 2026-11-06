@@ -17,9 +17,9 @@
 
 `ask(question, *, generator=None, db_path, max_rows=200, query_timeout_s=5.0, today=None, injected_sql=None, debug=False) -> dict`
 
-整条链路的唯一入口，评测也只调它。输入一个问题，它依次完成：先做一次语义层拒答判定（撑不住的问题直接拒答、不进模型，见「semantic_check」与「graph」两个模块）-> 读取库的表结构 -> 让大模型写成 SQL -> 按指标定义强制补齐订单范围条件（语义层，见 metrics 模块）-> 按库里字段的真实类型校验时间边界（语义层，见 time_boundary 模块）-> 对这条 SQL 做安全校验 -> 用只读连接执行 -> 把结果打包成一个字典返回。
+整条链路的唯一入口，评测也只调它。输入一个问题，它依次完成：先做一次语义层拒答判定（撑不住的问题直接拒答、不进模型，见「semantic_check」与「graph」两个模块）-> 读取库的表结构 -> 让大模型写成 SQL -> 按指标定义强制补齐订单范围条件（语义层，见 metrics 模块）-> 按库里字段的真实类型校验时间边界（语义层，见 time_boundary 模块）-> 对这条 SQL 做安全校验 -> 用只读连接执行 ->（执行报数据库错误时）把报错原文带回给模型修一次，修好的 SQL 重走注入/时间修正/guard/执行（阶段 1 报错回炉，见 retry_after_error）-> 把结果打包成一个字典返回。
 
-**实现分两层**：`pipeline.py`（90 行）只留按顺序调用与提前收尾；每一步怎么写 outcome、怎么打 debug 痕迹在 `pipeline_steps.py`，一函数一步——outcome 骨架 `new_outcome`（:28）、耗时收尾 `stamp`（:45）、debug tracer `make_tracer`（:51）、拒答 `run_refusal_gate`（:63）、取 SQL `resolve_sql`（:90）、指标注入 `enforce_metrics`（:135）、时间边界 `fix_time`（:154）、静态校验 `run_guard`（:170）、执行与判空 `execute`（:189）。搬家重构（2026-11-05）只挪了位置，语句与行为与瘦身前一致。
+**实现分两层**：`pipeline.py`（110 行）只留按顺序调用与提前收尾；每一步怎么写 outcome、怎么打 debug 痕迹在 `pipeline_steps.py`，一函数一步——outcome 骨架 `new_outcome`（:29）、耗时收尾 `stamp`（:47）、debug tracer `make_tracer`（:53）、拒答 `run_refusal_gate`（:65）、取 SQL `resolve_sql`（:92）、指标注入 `enforce_metrics`（:137）、时间边界 `fix_time`（:156）、静态校验 `run_guard`（:172）、执行与判空 `execute`（:191）、报错回炉 `retry_after_error`（:230）。搬家重构（2026-11-05）只挪了位置，语句与行为与瘦身前一致；回炉是阶段 1 新增的第十步。
 
 **输入**
 
@@ -408,6 +408,18 @@ caliber_note  str | null      模型在 ```sql 代码块之外给的一句口径
                               按哪个时间字段、paid/refunded/cancelled 算不算），由
                               extract_caliber_note 抽取；模型只回了 SQL、回 NO_SQL、
                               或走 injected_sql 时都是 null。llm_error 时同样是 null
+retry         dict | null     报错回炉（阶段 1）的痕迹。触发条件：LLM 路径 + 第一次执行报
+                              数据库错误（exec_error）。没触发（一次成功 / 拒答 / timeout /
+                              injected_sql 通道）时是 null。
+                              形状 {attempted: true, failed_sql, db_error, regenerated_sql, result}：
+                              failed_sql/db_error = 第一次的现场原文；regenerated_sql = 修复返回的
+                              SQL（模型拒绝修改 NO_SQL 或回炉调用挂了时 null）；
+                              result = ok（救回）| exec_error（修了还是错）| blocked（修好的 SQL
+                              没过安检，此时顶层 error 清空，报错原文只在 retry 里）| timeout |
+                              no_sql | llm_error。
+                              最多回炉一次；修好的 SQL 重走注入/时间修正/guard/执行，顶层
+                              sql/guard/enforcement/time_fix/result/llm_response/caliber_note
+                              反映的都是最后一次处理，第一次现场全在 retry 里
 elapsed_ms    float           端到端耗时（不含进程启动）
 ```
 
