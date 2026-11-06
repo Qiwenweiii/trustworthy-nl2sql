@@ -40,7 +40,7 @@
 
 **阶段规则（为什么这样判就够用）**：
 
-- 用例各归各的阶段（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（done，S1/S2 注入用例），v1 = 可信层（done，2026-11-04 转的，口径/空结果/拒答 9 条）。
+- 用例各归各的阶段（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（done，S1/S2 + 攻击面 A1–A6 共 8 条注入用例），v1 = 可信层（done，2026-11-04 转的，口径/空结果/拒答 9 条），v2 = 基线层（**pending**，2026-11-06 入文件的 golden set 40 条：真实分布问题 + 锚定种子标准结果，只度量 EX、不进退出码门禁）。
 - `--stage v0` 是日常模式：只跑该阶段用例，报告只出这阶段的结果，干净、直接。
 - `--all` 是验收模式：跑所有阶段，出"距离完整规范还差什么"的差距报告，只在阶段验收时手动跑，不进日常流程。
 - **退出码只看 done 阶段的失败**（`compute_exit_code`，run_eval.py:428；done 清单来自 `judge.done_stage_ids`，judge.py:453）。规则数据化在 `meta.stages.status` 里 —— v1 已于 2026-11-04 转成 `done`（done = v0 + v1），**代码一行没改**。判别性对照：同一条被人为改坏的 K1 断言，`--all --ids K1` 在 v1=pending 时退出码 0、转 done 后同样的跑法退出码 1。
@@ -270,7 +270,7 @@ _progress_line(event)    (:255)  一次采样/一次跳过压成一行进度文�
 make_progress_writer(stream) (:277)  进度回调：逐行 flush 写到调用方给的流
 ```
 
-进度约定三条：**只写 stderr**（stdout 留给报告，重定向/管道不串味）；**每完成一次采样打一行**，格式 `[序号/计划总数] 用例 [类别] run k/n 注入|模型 -> status=… 耗时 …s 失败断言 … | 校验一行`；**开跑前先打一条预估**（来自 `plan_summary`，含模型调用次数与单次最长超时提示）。预估行带范围前缀（`阶段 v0` 或 `全量模式`）。模型用例串行跑、单次调用上限 60s（`llm_client.py:16`），全量 27 次调用时控制台空着会像卡死——进度行就是治这个的。
+进度约定三条：**只写 stderr**（stdout 留给报告，重定向/管道不串味）；**每完成一次采样打一行**，格式 `[序号/计划总数] 用例 [类别] run k/n 注入|模型 -> status=… 耗时 …s 失败断言 … | 校验一行`；**开跑前先打一条预估**（来自 `plan_summary`，含模型调用次数与单次最长超时提示）。预估行带范围前缀（`阶段 v0` 或 `全量模式`）。模型用例串行跑、单次调用上限 60s（`llm_client.py:16`），全量 147 次调用（49 条真模型用例 × 3）时控制台空着会像卡死——进度行就是治这个的。
 
 ### 4.6 `render_text(report, *, cases_path, db_path, model, used_llm, exit_code) -> str`（:350）
 
@@ -294,7 +294,7 @@ CLI   --cases    默认 problems/eval_cases.json
       --stage    只跑该阶段用例（如 --stage v0）；阶段名不在 meta.stages -> 退出码 2 并列可用阶段
       --all      全量模式：跑所有阶段、出差距报告（验收时手动跑）
                  --stage 与 --all 必须显式二选一，都没有或都给 -> parser.error
-                 （不给默认值：防止手滑一条命令烧掉 27 次模型调用）
+                 （不给默认值：防止手滑一条命令烧掉上百次模型调用——扩到 57 条后全量默认 147 次）
       --ids      逗号分隔，在 --stage/--all 选出的集合上再收窄；含未知 id -> 2
       --repeats  默认 3
       --today    默认取 meta.anchor_today，再退到 date.today()；非法 YYYY-MM-DD -> 2
@@ -376,8 +376,11 @@ meta
 
 cases[]
   id                     "S1" ...        报告和 --ids 都用它
-  stage                  "v0" | "v1"     必须 ∈ meta.stages 的键；--stage 按它过滤
-  category               安全 | 口径 | 空结果 | 拒答      失败分组的分组键
+  stage                  "v0" | "v1" | "v2"   必须 ∈ meta.stages 的键；--stage 按它过滤
+                         （v2 = golden set 基线层，pending：进 --all 报告但不进退出码门禁）
+  category               失败分组的分组键。v0 = 安全；v1 = 口径 | 空结果 | 拒答；
+                         v2 = 分布维度（时间范围 | 口径变体 | 渠道维度 | 城市维度 | 客群维度 |
+                         组合条件 | 聚合形态 | 用词覆盖）
   question               str             送进 ask 的自然语言
   deterministic          bool            true => injected_sql 必填，且只跑 1 次
   injected_sql           str | 缺省      有则走注入，跳过取表结构与模型调用
@@ -469,10 +472,11 @@ load_config(env_file=None, *, require_llm=True) -> Config  config.py:72
 # 全量单测（含 judge 判别性、聚合/渲染、退出码闸门与进度行）
 uv run --no-sync python3 -m pytest -q
 
-# 日常模式：v0 阶段 = 2 条注入用例，不花 key，也不受数据窗口抖动影响
+# 日常模式：v0 阶段 = 8 条注入用例，不花 key，也不受数据窗口抖动影响
 uv run --no-sync python -m evaluation.run_eval --stage v0
 
-# 验收模式：9 条真模型用例 × --repeats(默认 3) = 27 次调用（由人确认后跑）
+# 验收模式：49 条真模型用例 × --repeats(默认 3) = 147 次调用（由人确认后跑；
+# v2 golden 40 条只报告不门禁，单独跑基线用 --stage v2 --repeats 1 ≈ 40 次调用）
 uv run --no-sync python -m evaluation.run_eval --all
 ```
 

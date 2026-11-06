@@ -206,14 +206,14 @@ K1 第 3 次失败暴露的是另一侧：不是**时间字段选错**，是**DA
 pytest -q
 ```
 
-覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）、语义层订单范围注入（缺失补上 / 冲突改写 / 已写对不动 / 未匹配指标不注入，`tests/test_metrics.py` + pipeline 集成用例）、语义层时间边界校验（DATETIME 闭区间改半开区间且不改字段 / DATE 字段不动 / 上界已带时分不动 / 函数包裹与 `<` 不在射程 / 列找不到与库读不到只记 skipped 不抛错，`tests/test_time_boundary.py` + pipeline 集成用例）。语义层拒答（`tests/test_semantic_check.py` 直接读 `problems/eval_cases.json` 的 9 条非注入用例问题文本核对判定，另覆盖取值放行 / 时间残片放行 / 维度归属 / 登记表与表结构双向一致性；`tests/test_pipeline_refusal.py` 覆盖岔路：拒答时模型一次都不调、outcome 字段集合与旧契约完全一致、`injected_sql` 不拦、放行路径上注入与时间修正原位不变）是本次新增。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因；断言 `expect` 形状校验（状态词拼错、布尔/行数/规则列表/正则类型写错载入即报错，不再留到运行期静默判红），以及数值断言取第一个**数值**单元格（字符串维度列不干扰、合法的 0 不被跳过）。`tests/test_init_db.py` 把演示库钉成单测：按锚定日重建时月份窗口与行数对账、同种子两次构建逐行相等、K1 的五个九月期望值逐一核对。
+覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）、语义层订单范围注入（缺失补上 / 冲突改写 / 已写对不动 / 未匹配指标不注入，`tests/test_metrics.py` + pipeline 集成用例）、语义层时间边界校验（DATETIME 闭区间改半开区间且不改字段 / DATE 字段不动 / 上界已带时分不动 / 函数包裹与 `<` 不在射程 / 列找不到与库读不到只记 skipped 不抛错，`tests/test_time_boundary.py` + pipeline 集成用例）。语义层拒答（`tests/test_semantic_check.py` 直接读 `problems/eval_cases.json` 的 49 条非注入用例问题文本核对判定，另覆盖取值放行 / 时间残片放行 / 维度归属 / 登记表与表结构双向一致性；`tests/test_pipeline_refusal.py` 覆盖岔路：拒答时模型一次都不调、outcome 字段集合与旧契约完全一致、`injected_sql` 不拦、放行路径上注入与时间修正原位不变）是本次新增。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因；断言 `expect` 形状校验（状态词拼错、布尔/行数/规则列表/正则类型写错载入即报错，不再留到运行期静默判红），以及数值断言取第一个**数值**单元格（字符串维度列不干扰、合法的 0 不被跳过）。`tests/test_init_db.py` 把演示库钉成单测：按锚定日重建时月份窗口与行数对账、同种子两次构建逐行相等、K1 的五个九月期望值逐一核对。
 
 ## 评测（阶段制）
 
-用例按阶段划分（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（S1、S2，纯注入不调模型，缺 key 也能跑），v1 = 可信层（口径 / 空结果 / 拒答共 9 条，需真模型）。**两个阶段现在都已承诺（done）**，v1 于 2026-11-04 转 done——此后 v1 用例失败视为回归。运行必须显式二选一（不给默认值，防止手滑全量烧掉模型调用）：
+用例按阶段划分（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（8 条纯注入：S1/S2 + 攻击面 A1–A6，不调模型，缺 key 也能跑），v1 = 可信层（口径 / 空结果 / 拒答共 9 条，需真模型），v2 = 基线层（golden set 40 条真实分布问题 + 锚定种子标准结果，**status=pending**：只度量执行准确率基线，不进 `--all` 退出码门禁；首个基线快照在 `docs/eval_report_v2_baseline.json`，EX 38/40 = 95.0%，两条红均为 D21/D22 城市取值缺口探针）。**v0、v1 已承诺（done）**，v1 于 2026-11-04 转 done——此后 v1 用例失败视为回归。运行必须显式二选一（不给默认值，防止手滑全量烧掉模型调用）：
 
 ```bash
-# 日常：只跑当前阶段（v0 的 2 条注入用例，不调 LLM）
+# 日常：只跑当前阶段（v0 的 8 条注入用例，不调 LLM）
 python -m evaluation.run_eval --stage v0
 
 # 改完代码的增量验证：只跑受影响的用例，--ids 逗号分隔可单独评测多条，--repeats 1 控制模型调用次数
@@ -221,13 +221,14 @@ python -m evaluation.run_eval --stage v0
 #  其余用例不会被执行、不会调模型）
 python -m evaluation.run_eval --all --ids E1,E2,E3 --repeats 1
 
-# 阶段验收时手动跑：全量差距报告（9 条真模型用例 × --repeats，默认 3 次 = 27 次调用）
+# 阶段验收时手动跑：全量差距报告（49 条真模型用例 × --repeats，默认 3 次 = 147 次调用；
+# v2 golden 40 条也在 --all 范围内，只报告不门禁。跑基线建议 --stage v2 --repeats 1 ≈ 40 次调用）
 python -m evaluation.run_eval --all
 ```
 
 - 改完代码默认只做增量验证：跑本次修改功能相关 + 可能受影响的用例（`--ids` + `--repeats 1`）；全量评测（`--all` 不带 `--ids`）耗时长、模型调用开销大，由人自行决定何时跑，日常改动不自动执行。
 
-- 用例在 `problems/eval_cases.json`（11 条），期望值全部写在用例里；`evaluation/` 只负责读用例、跑、判、聚合，不内联期望值。
+- 用例在 `problems/eval_cases.json`（57 条：v0 注入 8 + v1 真模型 9 + v2 golden 40），期望值全部写在用例里；`evaluation/` 只负责读用例、跑、判、聚合，不内联期望值。
 - 判定只出三类：**通过** / **失败** / **不可判定**（LLM 故障、配置缺失、演示库数据窗口不满足用例前提）。失败不预设分类——不再有用例级 `failure_type` 和断言级 `on_fail`，等于不给失败提前找理由；根因（`root_cause`）与建议落点只作证据与处置提示。
 - 概览行固定输出「通过 X / 失败 Y / 不可判定 Z（共 N 条）」，另固定一行「检测到 N 条拒答跳过的不可靠通过」——措辞只声明检测到的这一类，不代表没标的就可靠。
 - 不可靠通过：通过靠的是"用例接受拒答、模型碰巧真拒答了"或断言被跳过，现在过是运气，不是机制。**语义层机制拒答不计入**——`runs[].error.type == "semantic_refusal"` 的那几次是系统在调用模型之前拦的，每次都发生，属于机制不属于运气（R1/R2/R3 现在全走这条，所以清单为空）。
