@@ -255,6 +255,92 @@ def test_value_expect_requires_declared_tolerance(tmp_path: Path) -> None:
     load({"values": [1.0], "tolerance": {"mode": "relative", "value": 0.001}})
 
 
+def test_load_cases_rejects_invalid_assertion_expect(tmp_path: Path) -> None:
+    """expect 是判分依据：拼错的状态词、错类型的期望值必须载入即拒。
+
+    修复前它们能过载入，然后永远静默判红——比报错更难查。expected_status
+    只是显示字段，它的校验（v0 契约）替不了断言级 expect 的校验。
+    """
+
+    def case_with(check: str, expect: object) -> dict:
+        return {
+            "id": "X1",
+            "stage": "v0",
+            "category": "安全",
+            "question": "q",
+            "expected_status": "blocked",
+            "expected_behavior": "b",
+            "assertions": [
+                {"check": check, "expect": expect, "root_cause": "rc", "why": "w", "landing": "l"}
+            ],
+        }
+
+    with pytest.raises(CaseSpecError, match="status_in"):
+        _write_cases(tmp_path, [case_with("status_in", ["blockedd"])])
+    with pytest.raises(CaseSpecError, match="status_in"):
+        _write_cases(tmp_path, [case_with("status_in", "blocked")])
+    with pytest.raises(CaseSpecError, match="guard_passed"):
+        _write_cases(tmp_path, [case_with("guard_passed", "true")])
+    with pytest.raises(CaseSpecError, match="sql_null"):
+        _write_cases(tmp_path, [case_with("sql_null", 1)])
+    with pytest.raises(CaseSpecError, match="result_none"):
+        _write_cases(tmp_path, [case_with("result_none", None)])
+    with pytest.raises(CaseSpecError, match="result_empty_or_null"):
+        _write_cases(tmp_path, [case_with("result_empty_or_null", "yes")])
+    with pytest.raises(CaseSpecError, match="result_row_count"):
+        _write_cases(tmp_path, [case_with("result_row_count", "40")])
+    with pytest.raises(CaseSpecError, match="result_row_count"):
+        _write_cases(tmp_path, [case_with("result_row_count", -1)])
+    with pytest.raises(CaseSpecError, match="result_row_count"):
+        _write_cases(tmp_path, [case_with("result_row_count", True)])
+    with pytest.raises(CaseSpecError, match="guard_rules_include"):
+        _write_cases(tmp_path, [case_with("guard_rules_include", ["forbidden_function"])])
+    with pytest.raises(CaseSpecError, match="guard_rules_include"):
+        _write_cases(tmp_path, [case_with("guard_rules_include", [{"token": "x"}])])
+    with pytest.raises(CaseSpecError, match="guard_rules_exclude"):
+        _write_cases(tmp_path, [case_with("guard_rules_exclude", "forbidden_keyword")])
+    with pytest.raises(CaseSpecError, match="sql_matches"):
+        _write_cases(tmp_path, [case_with("sql_matches", 123)])
+    with pytest.raises(CaseSpecError, match="llm_response_matches"):
+        _write_cases(tmp_path, [case_with("llm_response_matches", ["含税"])])
+
+    # 合法形状照常能载（正向对照，防止校验写过头误杀真用例）
+    _write_cases(tmp_path, [case_with("status_in", ["blocked", "ok"])])
+    _write_cases(tmp_path, [case_with("result_row_count", 40)])
+
+
+def test_value_in_takes_numeric_cell_not_first_cell() -> None:
+    """GROUP BY 常见形态（维度列在前）下数值断言取第一个**数值**单元格。
+
+    修复前取到字符串 "2026-09" 判"不是数值"，即 README 说的"只比第一个数值单元格"
+    与实现不符的那条。
+    """
+    outcome = _ok_outcome(
+        "select '2026-09' as month, sum(amount) as total from orders",
+        [{"month": "2026-09", "total": 414786.30}],
+    )
+    expect = {"values": [414786.30], "tolerance": {"mode": "absolute", "value": 0.01}}
+    passed, observed = judge.CHECKS["result_value_in"](outcome, expect)
+    assert passed, observed
+
+
+def test_value_in_accepts_legitimate_zero() -> None:
+    """0 是合法答案：数值断言不复用 _is_blank 的"0 算空"语义，不能跳过它。"""
+    outcome = _ok_outcome("select count(*) as n from orders where 0 = 1", [{"n": 0}])
+    expect = {"values": [0], "tolerance": {"mode": "absolute", "value": 0.01}}
+    passed, observed = judge.CHECKS["result_value_in"](outcome, expect)
+    assert passed, observed
+
+
+def test_value_in_fails_when_no_numeric_cell() -> None:
+    """全表没有数值单元格时判不满足，证据指向"没有数值单元格"；不做字符串转数的隐式换型。"""
+    outcome = _ok_outcome("select name from customers limit 1", [{"name": "张伟"}])
+    expect = {"values": [414786.30], "tolerance": {"mode": "absolute", "value": 0.01}}
+    passed, observed = judge.CHECKS["result_value_in"](outcome, expect)
+    assert not passed
+    assert "没有数值单元格" in observed
+
+
 # --- S1：注入危险函数 ---
 
 

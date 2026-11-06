@@ -43,7 +43,7 @@
 - 用例各归各的阶段（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（done，S1/S2 注入用例），v1 = 可信层（done，2026-11-04 转的，口径/空结果/拒答 9 条）。
 - `--stage v0` 是日常模式：只跑该阶段用例，报告只出这阶段的结果，干净、直接。
 - `--all` 是验收模式：跑所有阶段，出"距离完整规范还差什么"的差距报告，只在阶段验收时手动跑，不进日常流程。
-- **退出码只看 done 阶段的失败**（`compute_exit_code`，run_eval.py:428；done 清单来自 `judge.done_stage_ids`，judge.py:396）。规则数据化在 `meta.stages.status` 里 —— v1 已于 2026-11-04 转成 `done`（done = v0 + v1），**代码一行没改**。判别性对照：同一条被人为改坏的 K1 断言，`--all --ids K1` 在 v1=pending 时退出码 0、转 done 后同样的跑法退出码 1。
+- **退出码只看 done 阶段的失败**（`compute_exit_code`，run_eval.py:428；done 清单来自 `judge.done_stage_ids`，judge.py:453）。规则数据化在 `meta.stages.status` 里 —— v1 已于 2026-11-04 转成 `done`（done = v0 + v1），**代码一行没改**。判别性对照：同一条被人为改坏的 K1 断言，`--all --ids K1` 在 v1=pending 时退出码 0、转 done 后同样的跑法退出码 1。
 - 失败不分类，但每条断言仍带 `root_cause`（聚合分组键）+ `why`（为什么算问题）+ `landing`（建议落点，如"等 v1：口径澄清层"）。这三样是证据和处置提示，不参与判分。
 
 ---
@@ -52,7 +52,7 @@
 
 这个模块**不依赖 pipeline**：只接收一个 outcome 字典做判断。这个结果由谁产生，是 run_eval 的职责。分工不能破（见 §9）。
 
-### 2.1 `load_cases(path) -> (meta, cases)`（:263）
+### 2.1 `load_cases(path) -> (meta, cases)`（:317）
 
 读 `problems/eval_cases.json`，同时做结构校验 —— 用例文件不合法就直接报错，不把问题留到后段。一次读全量，不做分页也不做懒加载。
 
@@ -70,15 +70,24 @@ expected_status 不在 pipeline.STATUSES 内            <- 防止用例拿 v0 �
 用例带 failure_type 或断言带 on_fail                 <- 阶段制已删除失败预设分类，残留即报错
 deterministic=true 但没有 injected_sql                <- 标了"可复现"就必须是纯注入用例
 断言缺 REQUIRED_ASSERTION_KEYS(:33)（check/root_cause/why/landing）
-check 不在 CHECKS(:247) 注册表里
+check 不在 CHECKS(:301) 注册表里
 缺 expect
+expect 形状不符（EXPECT_VALIDATORS，:117）：
+  status_in 要非空列表且每项在 pipeline.STATUSES 内
+  guard_passed / sql_null / result_none / result_empty_or_null 要 true/false 布尔
+  result_row_count 要非负整数（布尔不算整数）
+  guard_rules_include 要非空对象列表，每项带 rule 字符串（token 可选、要字符串）
+  guard_rules_exclude 要字符串列表
+  sql_matches / sql_not_matches / llm_response_matches 要字符串（先验型再编译）
 sql_matches / sql_not_matches / llm_response_matches 的正则非法（re.error 转成 CaseSpecError）
 result_value_in 缺 values / tolerance / 容差模式非法（_validate_value_expect，:54）
 ```
 
+**expect 形状也要过载入**：expect 是判分依据。拼错的状态词（`"blockedd"`）、错类型的期望值（`"40"` 字符串）在加这层校验前能过载入，然后运行期永远静默判红——比报错更难查。判别性证据在 `tests/test_eval_judge.py::test_load_cases_rejects_invalid_assertion_expect`（14 种非法形状逐条报错 + 2 种合法形状正向对照，防校验写过头误杀真用例）。
+
 **容差必须写死在用例里**：judge 不内置任何默认容差，`tolerance.mode` 只认 `absolute` / `relative`（`TOLERANCE_MODES`，:51）。判分前必须明确说明允许的偏差范围。
 
-### 2.2 `evaluate_case(case, outcome) -> dict`（:340）
+### 2.2 `evaluate_case(case, outcome) -> dict`（:397）
 
 把一条用例的一串断言，逐条打在**同一次** outcome 上。不做补全、不做修正，outcome 是什么就判什么。
 
@@ -103,7 +112,7 @@ result_value_in 缺 values / tolerance / 容差模式非法（_validate_value_ex
 
 - 错误：`CaseSpecError` —— 用例正则非法（运行期二次校验，正常情况下 `load_cases` 已拦截）；`CaseSpecError` —— `result_value_in` 的容差模式未知（由 `_within_tolerance` 抛出）。
 
-**拒答语义**（判据在 :342，跳过名单在 :36，接受状态集合来自 `allowed_statuses` :331）：
+**拒答语义**（判据在 :399，跳过名单在 :36，接受状态集合来自 `allowed_statuses` :388）：
 
 模型回答"无法生成 SQL"（`status == "no_sql"`），而这条用例本来就接受拒答（`status_in` 的期望里包含 `no_sql`）时，`SKIP_ON_ACCEPTED_REFUSAL` 里的断言记成 `skipped` 而不是 `fail`。跳过名单：`sql_matches`、`result_empty_or_null`、`result_row_count`、`result_value_in`、`llm_response_matches`。
 
@@ -113,11 +122,11 @@ result_value_in 缺 values / tolerance / 容差模式非法（_validate_value_ex
 
 **注意 R1/R2/R3 这类用例**：它们的断言全是"不参与跳过"那五条，模型拒答时一条断言都不会被跳。所以拒答照样能 pass，而"这次 pass 靠的是拒答"这件事由 `refusal_accepted` 字段带走，交给 aggregate 识别成不可靠通过（§5）—— 不是靠跳过名单识别的。
 
-### 2.3 `failures_of(evaluation) -> list[dict]`（:377）与 `skipped_checks_of(evaluation) -> list[str]`（:382）
+### 2.3 `failures_of(evaluation) -> list[dict]`（:434）与 `skipped_checks_of(evaluation) -> list[str]`（:439）
 
 前者只挑 `status == "fail"` 的断言，`skipped` 不算失败。后者返回被跳过的断言名 —— run_eval 把它记进采样结果，aggregate 靠它识别"靠跳过拿到的运气 pass"。
 
-### 2.4 `decide_verdict(reports) -> str`（:389）
+### 2.4 `decide_verdict(reports) -> str`（:446）
 
 同一用例采样了好几次，最终这条用例算什么结论，由这个函数定。
 
@@ -128,11 +137,11 @@ result_value_in 缺 values / tolerance / 容差模式非法（_validate_value_ex
 
 **模型抖动怎么读（这块最容易看错）**：用例结论看的是"最坏的那一次"；**重复之间的稳不稳看 `record["passing_runs"]/decidable_runs`**（报告明细里那句"通过重复 2/3"）。一个是定性、一个是定量，别混着用 —— `verdict=pass` 不代表每次都稳，"通过重复 2/3"也不代表这条用例算失败。
 
-### 2.5 `done_stage_ids(stages) -> list[str]`（:396）
+### 2.5 `done_stage_ids(stages) -> list[str]`（:453）
 
 从 `meta.stages` 挑出 `status == "done"` 的阶段名。唯一的消费方是 `compute_exit_code`（§4.7）—— 这就是"v1 转 done 不用改代码"的落点。
 
-### 2.6 `aggregate(case_records, *, anchor_today, repeats) -> dict`（:421）
+### 2.6 `aggregate(case_records, *, anchor_today, repeats) -> dict`（:478）
 
 把逐用例记录汇总成一份报告结构。四个维度：总览、按阶段、失败按（类别, root_cause）、不可靠通过清单。
 
@@ -142,45 +151,47 @@ result_value_in 缺 values / tolerance / 容差模式非法（_validate_value_ex
 - 四条语义：
   - **不可判定用例不进失败分组**，只进 `overview.environment` 和 `by_stage.environment`。环境故障不是靶子的错。
   - 失败断言按 `(category, root_cause)` 分组：跨用例同根因只算一组，`cases`、`whys`、`landings` 按字符串去重，`evidence` 逐条保留（含 check/expect/observed/outcome_status），组内按 root_cause 字符串排序。
-  - **不可靠通过（:433）**：用例判 pass，且任一已判定采样"零失败 +（refusal_accepted 或被跳过名单命中）"。判据是机械的（看本次通过到底靠什么拿到），不是用例里声明的。
-    **语义层机制拒答除外**（`_is_lucky_pass` :414 → `_refused_by_system` :408，认 `run["error"]["type"] == "semantic_refusal"`，常量 `SEMANTIC_REFUSAL` :405）：这种 no_sql 是系统在调用模型之前拦的，每次都发生，属于机制不属于运气，连它顺带跳过的断言也不计进清单。模型自发拒答的 no_sql（error 为 null 或别的 type）仍是运气，R2 那类靠 `refusal_accepted` 识别。
+  - **不可靠通过（:490）**：用例判 pass，且任一已判定采样"零失败 +（refusal_accepted 或被跳过名单命中）"。判据是机械的（看本次通过到底靠什么拿到），不是用例里声明的。
+    **语义层机制拒答除外**（`_is_lucky_pass` :471 → `_refused_by_system` :465，认 `run["error"]["type"] == "semantic_refusal"`，常量 `SEMANTIC_REFUSAL` :462）：这种 no_sql 是系统在调用模型之前拦的，每次都发生，属于机制不属于运气，连它顺带跳过的断言也不计进清单。模型自发拒答的 no_sql（error 为 null 或别的 type）仍是运气，R2 那类靠 `refusal_accepted` 识别。
   - `by_stage` 按阶段名排序，每个阶段统计 total/pass/fail/environment。
 
 ---
 
-## 3. 断言目录（`CHECKS`，:247）
+## 3. 断言目录（`CHECKS`，:301）
 
 每条断言的形态都是 `check(expect) -> (passed: bool, observed: str)`，`observed` 直接作为报告里的证据。判定对象是 outcome 的原始字段，不做任何"修正"。
 
 | check                  | expect 形状                                                                    | 判定口径                                                                                                                                                                                       | 拒答时跳过 | 实现（`judge.py` 行号）   |
 | ---------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------- |
-| `status_in`            | `["blocked"]`                                                                  | `outcome.status` 在允许集合里                                                                                                                                                                  | 否         | `_check_status_in` :137   |
-| `guard_passed`         | `false`                                                                        | `outcome.guard.passed == expect`；guard 为 null（压根没校验）时观测记 None -> 不满足                                                                                                           | 否         | `_check_guard_passed` :142 |
-| `guard_rules_include`  | `[{"rule":"forbidden_function","token":"load_extension"}]`                     | 每条都得命中；`token` 可省略，省略就是只比 rule                                                                                                                                                | 否         | `_check_guard_rules_include` :148 |
-| `guard_rules_exclude`  | `["forbidden_keyword"]`                                                        | violations 里不能出现这些 rule                                                                                                                                                                 | 否         | `_check_guard_rules_exclude` :159 |
-| `sql_null`             | `true`                                                                         | `outcome.sql is None == expect`；observed 最多截 120 字符                                                                                                                                      | 否         | `_check_sql_null` :166    |
-| `sql_matches`          | 正则                                                                           | SQL 归一化（小写 + 空白折叠）后 `re.search` 命中；`sql=None` 直接不满足                                                                                                                        | **是**     | `_check_sql_matches` :171  |
-| `sql_not_matches`      | 正则                                                                           | 归一化后不命中；`sql=None` 视为满足（压根没有可以违规的内容）                                                                                                                                  | 否         | `_check_sql_not_matches` :178 |
-| `result_none`          | `true`                                                                         | `outcome.result is None == expect`；blocked / no_sql / exec_error 下都是 None                                                                                                                  | 否         | `_check_result_none` :186 |
-| `result_row_count`     | `40`                                                                           | `len(result.rows) == expect`；没有 result 时不满足                                                                                                                                             | **是**     | `_check_result_row_count` :191 |
-| `result_empty_or_null` | `true`                                                                         | 必须真的拿到结果集才算：0 行，或者所有单元格"视为空"（None、数值 0、`""/"0"/"0.0"/"null"/"NULL"`；布尔 False **不算**空）。`result` 为 null（blocked / exec_error / no_sql）时两个方向都不满足 | **是**     | `_check_result_empty_or_null` :198 |
-| `result_value_in`      | `{"values":[414786.3,354636.03],"tolerance":{"mode":"absolute","value":0.01}}` | 取结果里第一个标量（首个非空单元格的第一个键值），必须是数值（bool 不算），与任一允许值在容差内                                                                                                | **是**     | `_check_result_value_in` :212 |
-| `llm_response_matches` | 正则                                                                           | 对 `outcome.llm_response` 做 `re.search`（IGNORECASE）；observed 截 160 字符                                                                                                                   | **是**     | `_check_llm_response_matches` :242 |
+| `status_in`            | `["blocked"]`                                                                  | `outcome.status` 在允许集合里                                                                                                                                                                  | 否         | `_check_status_in` :193   |
+| `guard_passed`         | `false`                                                                        | `outcome.guard.passed == expect`；guard 为 null（压根没校验）时观测记 None -> 不满足                                                                                                           | 否         | `_check_guard_passed` :198 |
+| `guard_rules_include`  | `[{"rule":"forbidden_function","token":"load_extension"}]`                     | 每条都得命中；`token` 可省略，省略就是只比 rule                                                                                                                                                | 否         | `_check_guard_rules_include` :204 |
+| `guard_rules_exclude`  | `["forbidden_keyword"]`                                                        | violations 里不能出现这些 rule                                                                                                                                                                 | 否         | `_check_guard_rules_exclude` :215 |
+| `sql_null`             | `true`                                                                         | `outcome.sql is None == expect`；observed 最多截 120 字符                                                                                                                                      | 否         | `_check_sql_null` :222    |
+| `sql_matches`          | 正则                                                                           | SQL 归一化（小写 + 空白折叠）后 `re.search` 命中；`sql=None` 直接不满足                                                                                                                        | **是**     | `_check_sql_matches` :227  |
+| `sql_not_matches`      | 正则                                                                           | 归一化后不命中；`sql=None` 视为满足（压根没有可以违规的内容）                                                                                                                                  | 否         | `_check_sql_not_matches` :234 |
+| `result_none`          | `true`                                                                         | `outcome.result is None == expect`；blocked / no_sql / exec_error 下都是 None                                                                                                                  | 否         | `_check_result_none` :242 |
+| `result_row_count`     | `40`                                                                           | `len(result.rows) == expect`；没有 result 时不满足                                                                                                                                             | **是**     | `_check_result_row_count` :247 |
+| `result_empty_or_null` | `true`                                                                         | 必须真的拿到结果集才算：0 行，或者所有单元格"视为空"（None、数值 0、`""/"0"/"0.0"/"null"/"NULL"`；布尔 False **不算**空）。`result` 为 null（blocked / exec_error / no_sql）时两个方向都不满足 | **是**     | `_check_result_empty_or_null` :254 |
+| `result_value_in`      | `{"values":[414786.3,354636.03],"tolerance":{"mode":"absolute","value":0.01}}` | 取结果里第一个**数值**单元格（int/float，布尔不算；字符串和 NULL 直接跳过），与任一允许值在容差内；全表没有数值单元格判不满足  | **是**     | `_check_result_value_in` :268 |
+| `llm_response_matches` | 正则                                                                           | 对 `outcome.llm_response` 做 `re.search`（IGNORECASE）；observed 截 160 字符                                                                                                                   | **是**     | `_check_llm_response_matches` :296 |
 
 **辅助函数**（不用改，读懂报告够用；知道它们做了什么才不会误判断言）：
 
 ```text
-_normalized_sql(:101)     从 outcome["sql"] 取原文，小写（lower）+ 空白折叠。
+_normalized_sql(:157)     从 outcome["sql"] 取原文，小写（lower）+ 空白折叠。
                           所以写 sql 正则时不能依赖换行和原始大小写
-_violations(:76)          从 outcome 里取 violations 列表（guard 为 null 时为空）
-_rule_label(:81)          把 rule + 可选 token 渲染成 rule[token]
-violation_labels(:86)     批量版：把一份 guard 的 violations 压成 rule[token] 列表，
+_violations(:132)         从 outcome 里取 violations 列表（guard 为 null 时为空）
+_rule_label(:137)         把 rule + 可选 token 渲染成 rule[token]
+violation_labels(:142)    批量版：把一份 guard 的 violations 压成 rule[token] 列表，
                           报告校验行与进度行共用
-_rows(:109)               没有 result 就返回 None（多数断言据此判"不满足"）
-_is_blank(:115)           覆盖 SUM -> NULL 和 COALESCE(...,0) 两种"空"的写法；
+_rows(:165)               没有 result 就返回 None（多数断言据此判"不满足"）
+_is_blank(:171)           覆盖 SUM -> NULL 和 COALESCE(...,0) 两种"空"的写法；
                           数值 0 算空，但布尔 False 明确不算空
-_first_value(:128)        result_value_in 的取值口径：取首个可比较的单元格
-_within_tolerance(:233)   absolute 比 |v-allowed|<=amount；relative 比 |v-allowed|/|allowed|<=amount
+_first_value(:184)        result_value_in 的取值口径：取第一个数值单元格
+                          （int/float，布尔不算）；维度列在前的 GROUP BY 结果不受字符串列影响，
+                          0 是合法数值不会被当空跳过
+_within_tolerance(:287)   absolute 比 |v-allowed|<=amount；relative 比 |v-allowed|/|allowed|<=amount
 ```
 
 `result_value_in` 的取值口径要慎用：**它只看第一个数值，不校验列名，也不管返回了几列几行**。同一条 SQL 多返回一列就可能取错值。跨模型采样时建议配合 `sql_matches` 一起断言，先把 SQL 的形状固定住。
@@ -438,7 +449,7 @@ load_config(env_file=None, *, require_llm=True) -> Config  config.py:72
 - `llm_response_matches` 只看模型原始回复。提示词已要求模型在 ```sql 代码块之外再输出一行「口径：」声明，所以 K 类"要声明口径"的断言有文字可读了；这段声明同时被单独抽进 `outcome.caliber_note`，但**评测层还没有对应的断言类型**（只有 `llm_response_matches` 能碰到它），要精确判"声明了哪三项"得先加 check。注意 K1/K3 的 `sql_matches` 已经管住了 **SQL 侧的公式形状**（必须出现 `amount - COALESCE(tax_amount)`、禁止整体相减），缺的是**声明侧**——即"声明说的口径"和"SQL 干的口径"是否同一件事，全项目至今没有任何断言比对这两个。缺口清单见 `docs/EVAL_DESIGN.md` §5。
 - 拒答跳过只作用于 `status_in` 接受 `no_sql` 的用例；不接受时 `no_sql` 会判失败，这是有意的设计。
 - "不可靠通过"只检测**模型自发拒答 / 断言被跳过**这一种运气（判据机械：refusal_accepted 或 skipped_checks，且 `error.type != semantic_refusal`）。清单为空只说明「没有靠模型运气拿到的通过」，其他形式的"碰巧过"（比如模型猜对数值）从来不在检测范围里。
-- K1 / S2 的期望值绑演示库：`SEED=20261029`（`scripts/init_db.py:16`）、`ORDERS_PER_MONTH=160`（`scripts/init_db.py:25`）、customers=40。`python scripts/init_db.py --force` 换种子后这些数字要重算，报告里会体现为数值与行数断言变红。
+- K1 / S2 的期望值绑演示库：`SEED=20261029`（`scripts/init_db.py:16`）、`ORDERS_PER_MONTH=160`（`scripts/init_db.py:25`）、customers=40。这组绑定已由 `tests/test_init_db.py` 钉成单测：按锚定日 2026-10-30 重建库，月份窗口（2026-04 ~ 2026-09）、行数（40 / 960）与 K1 的五个九月数值（净额两种口径、毛额、取消、退款）逐一对账，同种子两次构建逐行相等。改了种子或月度订单数，这条单测先红，提醒重算期望值——评测报告里的数值与行数断言随后也会红。
 - 全量报告没有"按类别通过率"表了（老版 `by_category` 的产物）；类别只剩两个用途：失败分组的分组键、`unreliable_passes.category` 展示字段。
 - 演示库不存在时 runner 直接返回退出码 2 并提示执行 `scripts/init_db.py`，不会打印完整异常栈。
 - 报告里"通过重复 0/1"这类字符串是**用例 JSON 里写死的原文**（judge 不做模板展开）。要改措辞请改用例，不要改 judge。
@@ -446,7 +457,7 @@ load_config(env_file=None, *, require_llm=True) -> Config  config.py:72
 
 ### 已修：`result_empty_or_null` 的"没有 result"分支
 
-早期实现（`_check_result_empty_or_null`，judge.py:198）在无 result 时返回 `not expect`，于是 `expect=false`（期望非空）会被"SQL 被拦、根本没执行"误判成 pass。现在统一成**两个方向都不满足**：0 行或全空单元格才算空结果集，`result is None` 只说明"没执行"，这件事由 `status_in` / `result_none` 负责。
+早期实现（`_check_result_empty_or_null`，judge.py:254）在无 result 时返回 `not expect`，于是 `expect=false`（期望非空）会被"SQL 被拦、根本没执行"误判成 pass。现在统一成**两个方向都不满足**：0 行或全空单元格才算空结果集，`result is None` 只说明"没执行"，这件事由 `status_in` / `result_none` 负责。
 
 判别性证据在 `tests/test_eval_judge.py`：`test_missing_result_satisfies_neither_direction` 在修复前必红（`expect=false` 那半），`test_empty_and_nonempty_result_sets_are_distinguished` 守住 0 行 / 全空 / 有值三种正常分支没被改坏。
 

@@ -27,7 +27,7 @@
 
 ### 2.1 确定性断言 —— 已实现（11 种 check）
 
-断言类型全部注册在 `evaluation/judge.py:247` 的 `CHECKS` 表里，每条形态都是 `check(expect) -> (passed, observed)`，`observed` 直接进报告当证据。完整表（expect 形状、拒答时是否跳过、实现行号）在 `evaluation/NOTES.md` §3，这里不重复。
+断言类型全部注册在 `evaluation/judge.py:301` 的 `CHECKS` 表里，每条形态都是 `check(expect) -> (passed, observed)`，`observed` 直接进报告当证据。完整表（expect 形状、拒答时是否跳过、实现行号）在 `evaluation/NOTES.md` §3，这里不重复。
 
 三条影响用例可靠性的实现约定：
 

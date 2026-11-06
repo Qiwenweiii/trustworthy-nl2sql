@@ -73,6 +73,62 @@ def _validate_value_expect(case_id: str, expect: Any) -> None:
         raise CaseSpecError(f"用例 {case_id}.result_value_in 的 tolerance.value 必须是数字")
 
 
+def _validate_bool_expect(case_id: str, check: str, expect: Any) -> None:
+    if not isinstance(expect, bool):
+        raise CaseSpecError(f"用例 {case_id}.{check} 的 expect 必须是 true/false，实际是 {expect!r}")
+
+
+def _validate_status_in(case_id: str, check: str, expect: Any) -> None:
+    if not isinstance(expect, list) or not expect:
+        raise CaseSpecError(f"用例 {case_id}.status_in 的 expect 必须是非空状态列表，实际是 {expect!r}")
+    outside = [item for item in expect if item not in STATUSES]
+    if outside:
+        raise CaseSpecError(f"用例 {case_id}.status_in 含契约 {list(STATUSES)} 外的状态 {outside}")
+
+
+def _validate_row_count(case_id: str, check: str, expect: Any) -> None:
+    if isinstance(expect, bool) or not isinstance(expect, int) or expect < 0:
+        raise CaseSpecError(f"用例 {case_id}.result_row_count 的 expect 必须是非负整数，实际是 {expect!r}")
+
+
+def _validate_rules_include(case_id: str, check: str, expect: Any) -> None:
+    if not isinstance(expect, list) or not expect:
+        raise CaseSpecError(f"用例 {case_id}.guard_rules_include 的 expect 必须是非空对象列表")
+    for wanted in expect:
+        if not isinstance(wanted, dict) or not isinstance(wanted.get("rule"), str):
+            raise CaseSpecError(f"用例 {case_id}.guard_rules_include 每项必须是带 rule 字符串的对象: {wanted!r}")
+        token = wanted.get("token")
+        if token is not None and not isinstance(token, str):
+            raise CaseSpecError(f"用例 {case_id}.guard_rules_include 的 token 必须是字符串: {token!r}")
+
+
+def _validate_rule_name_list(case_id: str, check: str, expect: Any) -> None:
+    if not isinstance(expect, list) or not all(isinstance(item, str) for item in expect):
+        raise CaseSpecError(f"用例 {case_id}.guard_rules_exclude 的 expect 必须是字符串列表，实际是 {expect!r}")
+
+
+def _validate_regex_str(case_id: str, check: str, expect: Any) -> None:
+    if not isinstance(expect, str):
+        raise CaseSpecError(f"用例 {case_id}.{check} 的 expect 必须是正则字符串，实际是 {expect!r}")
+
+
+# 断言 expect 的形状校验：判分依据拼错必须载入即报错，不能留到运行期静默判红。
+# result_value_in 的 expect 是对象，由 _validate_value_expect 单独校验。
+EXPECT_VALIDATORS: dict[str, Callable[[str, str, Any], None]] = {
+    "status_in": _validate_status_in,
+    "guard_passed": _validate_bool_expect,
+    "sql_null": _validate_bool_expect,
+    "result_none": _validate_bool_expect,
+    "result_empty_or_null": _validate_bool_expect,
+    "result_row_count": _validate_row_count,
+    "guard_rules_include": _validate_rules_include,
+    "guard_rules_exclude": _validate_rule_name_list,
+    "sql_matches": _validate_regex_str,
+    "sql_not_matches": _validate_regex_str,
+    "llm_response_matches": _validate_regex_str,
+}
+
+
 def _violations(outcome: dict) -> list[dict]:
     """取 guard.violations 原始记录；没有做校验时为空。"""
     return (outcome.get("guard") or {}).get("violations") or []
@@ -126,10 +182,10 @@ def _is_blank(value: Any) -> bool:
 
 
 def _first_value(rows: list[dict]) -> tuple[str, Any] | None:
-    """取结果里第一个标量取值，用于数值断言。"""
+    """取结果里第一个数值单元格（布尔不算），与"只比第一个数值"的口径一致。"""
     for row in rows:
         for key, value in row.items():
-            if isinstance(value, (int, float, str)) or value is None:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
                 return key, value
     return None
 
@@ -215,10 +271,8 @@ def _check_result_value_in(outcome: dict, expect: dict) -> tuple[bool, str]:
         return False, f"无 result（status={outcome.get('status')}）"
     picked = _first_value(rows)
     if picked is None:
-        return False, "结果里没有可比较的取值"
+        return False, "结果里没有数值单元格"
     column, value = picked
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return False, f"{column}={value!r} 不是数值"
     tolerance = expect["tolerance"]
     within = any(
         _within_tolerance(value, allowed, tolerance["mode"], tolerance["value"])
@@ -317,6 +371,9 @@ def load_cases(path: Path) -> tuple[dict, list[dict]]:
                 raise CaseSpecError(f"用例 {case_id} 用了未知断言 {check}")
             if "expect" not in assertion:
                 raise CaseSpecError(f"用例 {case_id}.{check} 缺 expect")
+            validator = EXPECT_VALIDATORS.get(check)
+            if validator is not None:
+                validator(case_id, check, assertion["expect"])
             if check in {"sql_matches", "sql_not_matches", "llm_response_matches"}:
                 try:
                     re.compile(assertion["expect"])
