@@ -760,3 +760,79 @@ def test_done_stage_ids_only_reads_meta() -> None:
     stages = {"v0": {"status": "done"}, "v1": {"status": "pending"}, "v2": {"status": "done"}}
     assert judge.done_stage_ids(stages) == ["v0", "v2"]
     assert judge.done_stage_ids({"v1": {"status": "pending"}}) == []
+
+
+# --- 已知缺陷挂账豁免（known_defect）载入账 ---
+
+_KD = {
+    "id": "KD-001",
+    "root_cause": "文本级注入无法跨子查询定位条件",
+    "fix_stage": "阶段 4（AST 改写）",
+    "release_condition": "修复落地且某轮 3/3 全绿后删除本块",
+}
+_KD_META = {
+    "anchor_today": "2026-10-30",
+    "stages": {"v0": {"status": "done"}, "v1": {"status": "done"}, "v2": {"status": "done"}},
+}
+
+
+def _kd_case(stage: str, known_defect) -> dict:
+    return {
+        "id": "KD1",
+        "stage": stage,
+        "category": "渠道维度",
+        "question": "q",
+        "expected_status": "ok",
+        "expected_behavior": "b",
+        "assertions": [
+            {
+                "check": "status_in",
+                "expect": ["ok"],
+                "root_cause": "kd-flake",
+                "capability": "基线层",
+                "why": "w",
+                "landing": "l",
+            }
+        ],
+        "known_defect": known_defect,
+    }
+
+
+def _load(tmp_path: Path, case: dict):
+    _write_cases(tmp_path, [case], meta=_KD_META)
+    return judge.load_cases(tmp_path / "cases.json")
+
+
+def test_load_accepts_known_defect_on_v2(tmp_path: Path) -> None:
+    """v2 金标层允许挂账：块在、四键齐、值非空即合法。"""
+    _, cases = _load(tmp_path, _kd_case("v2", _KD))
+    assert cases[0]["known_defect"]["id"] == "KD-001"
+
+
+def test_load_rejects_known_defect_on_guarded_stages(tmp_path: Path) -> None:
+    """豁免只松基线层的门禁，不松 v0/v1 的安全与可信线——想给它们挂账直接载入报错。"""
+    for stage in ("v0", "v1"):
+        with pytest.raises(CaseSpecError, match="挂账豁免"):
+            _load(tmp_path, _kd_case(stage, _KD))
+
+
+def test_load_rejects_malformed_known_defect(tmp_path: Path) -> None:
+    """挂账必须三件套齐全：缺根因/归属/解除条件任何一个都不放行，空字符串也不行。"""
+    for broken in (
+        {"id": "KD-001"},
+        {**_KD, "root_cause": "  "},
+        {**_KD, "fix_stage": None},
+        "就一句话不算挂账",
+    ):
+        with pytest.raises(CaseSpecError, match="known_defect"):
+            _load(tmp_path, _kd_case("v2", broken))
+
+
+def test_real_file_d15_is_the_only_exempted_case() -> None:
+    """实况账：全文件只有 D15 挂着 KD-001，且块内容可核对到修复归属。"""
+    _, cases = judge.load_cases(CASES_PATH)
+    exempted = [case for case in cases if case.get("known_defect")]
+    assert [case["id"] for case in exempted] == ["D15"]
+    kd = exempted[0]["known_defect"]
+    assert kd["id"] == "KD-001"
+    assert all(str(kd[key]).strip() for key in ("root_cause", "fix_stage", "release_condition"))

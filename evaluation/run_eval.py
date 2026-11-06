@@ -144,6 +144,8 @@ def run_cases(
             "question": case["question"],
             "expected_status": case["expected_status"],
             "expected_behavior": case["expected_behavior"],
+            # 挂账豁免随记录透传进报告：不带该块的用例恒为 null，报告契约键稳定
+            "known_defect": case.get("known_defect"),
             "injected": bool(case.get("injected_sql")),
             "runs": [],
             "failures": [],
@@ -382,6 +384,10 @@ def render_text(report: dict, *, cases_path: Path, db_path: Path, model: str, us
         f"通过 {overview['pass']} / 失败 {overview['fail']} / 不可判定 {overview['environment']}"
         f"（共 {overview['cases']} 条）"
     )
+    if overview.get("exempted"):
+        lines.append(
+            f"其中 {overview['exempted']} 条失败处于挂账豁免（known_defect：红照报，不拦 --all 退出码；账见逐用例明细）"
+        )
     lines.append(f"检测到 {overview['unreliable_pass']} 条拒答跳过的不可靠通过")
 
     if ctx["mode"] == "all":
@@ -421,6 +427,12 @@ def render_text(report: dict, *, cases_path: Path, db_path: Path, model: str, us
                 f"    ✗ {failure['check']} 期望={json.dumps(failure['expect'], ensure_ascii=False)}"
                 f" → {failure['observed']}｜根因 {failure['root_cause']}"
             )
+        known_defect = record.get("known_defect")
+        if known_defect and record["verdict"] == judge.VERDICT_FAIL:
+            lines.append(
+                f"    ⚠ 挂账豁免 {known_defect['id']}：根因 {known_defect['root_cause']}"
+                f"｜修复归属 {known_defect['fix_stage']}｜解除条件 {known_defect['release_condition']}"
+            )
         if record["injected"]:
             lines.append(f"    注入 SQL: {record['runs'][0]['sql'] if record.get('runs') else '（未执行）'}")
         lines.append("")
@@ -429,12 +441,15 @@ def render_text(report: dict, *, cases_path: Path, db_path: Path, model: str, us
 
 
 def compute_exit_code(report: dict) -> int:
-    """退出码闸门：全量模式只看 done 阶段的失败，阶段模式看本阶段失败。"""
+    """退出码闸门：全量模式只看 done 阶段的失败，阶段模式看本阶段失败；
+    带 known_defect 挂账块的失败用例在全量模式下豁免（红照报、不拦门），阶段模式不豁免。"""
     ctx = report["run_context"]
     if ctx["mode"] == "all":
         done = set(judge.done_stage_ids(ctx["stages"]))
         gating_fail = any(
-            record["verdict"] == judge.VERDICT_FAIL and record["stage"] in done
+            record["verdict"] == judge.VERDICT_FAIL
+            and record["stage"] in done
+            and not record.get("known_defect")
             for record in report["cases"]
         )
     else:

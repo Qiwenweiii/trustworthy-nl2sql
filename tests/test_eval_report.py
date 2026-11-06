@@ -331,3 +331,86 @@ def test_all_mode_prints_mandated_unreliable_wording() -> None:
     assert "检测到 1 条拒答跳过的不可靠通过" in text
     assert "不可靠通过共" not in text
     assert "R2 [v1/拒答]" in text
+
+
+# --- 已知缺陷挂账豁免：退出码、聚合、渲染、透传 ---
+
+_KD = {
+    "id": "KD-001",
+    "root_cause": "文本级注入无法跨子查询定位条件",
+    "fix_stage": "阶段 4（AST 改写）",
+    "release_condition": "修复落地且某轮 3/3 全绿后删除本块",
+}
+
+
+def _exit_report_with_v2_done(records: list[dict]) -> dict:
+    report = _exit_report("all", records)
+    report["run_context"]["stages"]["v2"] = {"status": "done"}
+    return report
+
+
+def test_all_mode_known_defect_failure_is_exempted() -> None:
+    """done 阶段带挂账标记的失败不置退出码；不带标记的同样失败必须置 1——反向守卫。"""
+    exempt = _stage_record("D15", "v2", judge.VERDICT_FAIL)
+    exempt["known_defect"] = _KD
+    assert run_eval.compute_exit_code(_exit_report_with_v2_done([exempt])) == 0
+
+    plain = _stage_record("D23", "v2", judge.VERDICT_FAIL)
+    assert run_eval.compute_exit_code(_exit_report_with_v2_done([plain])) == 1
+
+    both = _exit_report_with_v2_done([exempt, plain])
+    assert run_eval.compute_exit_code(both) == 1
+
+
+def test_stage_mode_ignores_exemption() -> None:
+    """--stage 单跑是成绩单不是门禁：挂账题红着，退出码照样 1。"""
+    exempt = _stage_record("D15", "v2", judge.VERDICT_FAIL)
+    exempt["known_defect"] = _KD
+    report = _exit_report("stage", [exempt])
+    report["run_context"]["stages"]["v2"] = {"status": "done"}
+    assert run_eval.compute_exit_code(report) == 1
+
+
+def test_aggregate_counts_exempted_failures_in_overview() -> None:
+    """overview 要能报"红了几条、其中几条挂账"，豁免数量来自数据不是口算。"""
+    exempt = _stage_record("D15", "v2", judge.VERDICT_FAIL)
+    exempt["known_defect"] = _KD
+    plain = _stage_record("D23", "v2", judge.VERDICT_FAIL)
+    report = judge.aggregate([exempt, plain], anchor_today=ANCHOR.isoformat(), repeats=3)
+    assert report["overview"]["fail"] == 2
+    assert report["overview"]["exempted"] == 1
+
+
+def test_render_shows_known_defect_ledger() -> None:
+    """红照报：明细里给挂账编号、根因、修复归属、解除条件四件套，一个都少不了。"""
+    exempt = _stage_record("D15", "v2", judge.VERDICT_FAIL)
+    exempt["known_defect"] = _KD
+    report = _exit_report_with_v2_done([exempt])
+    text = run_eval.render_text(
+        report,
+        cases_path=Path("cases.json"),
+        db_path=Path("demo.db"),
+        model="",
+        used_llm=False,
+        exit_code=run_eval.compute_exit_code(report),
+    )
+    assert "挂账豁免 KD-001" in text
+    assert _KD["root_cause"] in text
+    assert _KD["fix_stage"] in text
+    assert _KD["release_condition"] in text
+    assert "❌ 失败" in text  # 挂账不改判决颜色
+
+
+def test_run_cases_passes_known_defect_into_records(demo_db: Path) -> None:
+    """透传账：用例带挂账块 -> 报告记录原样带出；不带 -> 恒为 null（键必须在，契约稳定）。"""
+    kd_case = _case("KD1", "SELECT COUNT(*) AS n FROM orders", [{"check": "status_in", "expect": ["ok"]}])
+    kd_case["stage"] = "v2"
+    kd_case["known_defect"] = _KD
+    plain_case = _case("KD2", "SELECT COUNT(*) AS n FROM orders", [{"check": "status_in", "expect": ["ok"]}])
+    plain_case["stage"] = "v2"
+
+    records = _run([kd_case, plain_case], demo_db)
+    by_id = {record["id"]: record for record in records}
+    assert by_id["KD1"]["known_defect"] == _KD
+    assert "known_defect" in by_id["KD2"]
+    assert by_id["KD2"]["known_defect"] is None

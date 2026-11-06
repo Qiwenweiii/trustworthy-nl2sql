@@ -32,6 +32,11 @@ REQUIRED_CASE_KEYS = (
 )
 REQUIRED_ASSERTION_KEYS = ("check", "root_cause", "why", "landing")
 
+# 已知缺陷挂账豁免（known_defect）：红照报，只是不拦 --all 退出码。
+# 只对金标基线层开放——v0/v1 是安全/可信承诺线，失败必须报警，不接受挂账。
+EXEMPTABLE_STAGES = frozenset({"v2"})
+REQUIRED_KNOWN_DEFECT_KEYS = ("id", "root_cause", "fix_stage", "release_condition")
+
 # 模型拒答且用例接受拒答时，只看 SQL / 结果 / 答案文本的断言不参与判定
 SKIP_ON_ACCEPTED_REFUSAL = frozenset(
     {
@@ -360,6 +365,21 @@ def load_cases(path: Path) -> tuple[dict, list[dict]]:
             if forbidden in case:
                 raise CaseSpecError(f"用例 {case_id} 还带着 {forbidden}：阶段制已删除失败预设分类")
 
+        known_defect = case.get("known_defect")
+        if known_defect is not None:
+            if case["stage"] not in EXEMPTABLE_STAGES:
+                raise CaseSpecError(
+                    f"用例 {case_id} 在阶段 {case['stage']!r} 试图挂账豁免："
+                    f"只有金标基线层 {sorted(EXEMPTABLE_STAGES)} 接受 known_defect"
+                )
+            if not isinstance(known_defect, dict) or not all(
+                str(known_defect.get(key) or "").strip() for key in REQUIRED_KNOWN_DEFECT_KEYS
+            ):
+                raise CaseSpecError(
+                    f"用例 {case_id} 的 known_defect 必须是带非空 "
+                    f"{list(REQUIRED_KNOWN_DEFECT_KEYS)} 四个键的对象（根因/修复归属/解除条件缺一个都不放行）"
+                )
+
         for assertion in case["assertions"]:
             miss = [key for key in REQUIRED_ASSERTION_KEYS if key not in assertion]
             if miss:
@@ -553,6 +573,7 @@ def aggregate(case_records: list[dict], *, anchor_today: str, repeats: int) -> d
             "cases": len(case_records),
             "pass": len(passed),
             "fail": len(failed),
+            "exempted": sum(1 for record in failed if record.get("known_defect")),
             "environment": len(environment),
             "unreliable_pass": len(unreliable),
             "verdict_values": sorted(verdicts),
