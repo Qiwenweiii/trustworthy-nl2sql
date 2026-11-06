@@ -15,11 +15,11 @@
 
 ## pipeline — `src/data_agent/pipeline.py`
 
-`ask(question, *, generator=None, db_path, max_rows=200, query_timeout_s=5.0, today=None, injected_sql=None, debug=False) -> dict`
+`ask(question, *, generator=None, db_path, max_rows=200, query_timeout_s=5.0, today=None, injected_sql=None, debug=False, tracer=None) -> dict`
 
 整条链路的唯一入口，评测也只调它。输入一个问题，它依次完成：先做一次语义层拒答判定（撑不住的问题直接拒答、不进模型，见「semantic_check」与「graph」两个模块）-> 读取库的表结构 -> 让大模型写成 SQL -> 按指标定义强制补齐订单范围条件（语义层，见 metrics 模块）-> 按库里字段的真实类型校验时间边界（语义层，见 time_boundary 模块）-> 对这条 SQL 做安全校验 -> 用只读连接执行 ->（执行报数据库错误时）把报错原文带回给模型修一次，修好的 SQL 重走注入/时间修正/guard/执行（阶段 1 报错回炉，见 retry_after_error）-> 把结果打包成一个字典返回。
 
-**实现分两层**：`pipeline.py`（110 行）只留按顺序调用与提前收尾；每一步怎么写 outcome、怎么打 debug 痕迹在 `pipeline_steps.py`，一函数一步——outcome 骨架 `new_outcome`（:29）、耗时收尾 `stamp`（:47）、debug tracer `make_tracer`（:53）、拒答 `run_refusal_gate`（:65）、取 SQL `resolve_sql`（:92）、指标注入 `enforce_metrics`（:137）、时间边界 `fix_time`（:156）、静态校验 `run_guard`（:172）、执行与判空 `execute`（:191）、报错回炉 `retry_after_error`（:230）。搬家重构（2026-11-05）只挪了位置，语句与行为与瘦身前一致；回炉是阶段 1 新增的第十步。
+**实现分两层**：`pipeline.py`（115 行）只留按顺序调用与提前收尾；每一步怎么写 outcome、怎么打 debug 痕迹在 `pipeline_steps.py`，一函数一步——outcome 骨架 `new_outcome`（:29）、耗时收尾 `stamp`（:47）、debug tracer `make_tracer`（:53）、拒答 `run_refusal_gate`（:65）、取 SQL `resolve_sql`（:92）、指标注入 `enforce_metrics`（:137）、时间边界 `fix_time`（:156）、静态校验 `run_guard`（:172）、执行与判空 `execute`（:191）、报错回炉 `retry_after_error`（:230）。搬家重构（2026-11-05）只挪了位置，语句与行为与瘦身前一致；回炉是阶段 1 新增的第十步。阶段 3 M1a 给 `ask()` 加了可选 `tracer` 入参（`trace = tracer or make_tracer(debug)`，不传时行为不变；判别性测试 `tests/test_pipeline_tracer.py`）。
 
 **输入**
 

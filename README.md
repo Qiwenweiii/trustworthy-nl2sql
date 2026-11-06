@@ -71,6 +71,7 @@ python -m data_agent.cli "上个月销售额是多少" --debug
 | `today`        | 当前日期 | 基准日期，原样传进 SQL 生成器用于提示词里的“上个月”等相对时间；评测冻结为 `2026-10-30`，正常运行不传                                                                                                                                                          |
 | `injected_sql` | `None`   | 非空时跳过**问题层的语义拒答检查**（注入用例的问题文本只是标签，不是业务问题）与取 schema、模型调用，把这条 SQL 当作模型输出；SQL 层的语义检查（订单范围注入、时间边界校验）、静态校验与只读执行照常进行（**注入不绕过 guard**，缺订单范围条件同样会被补上并记进 `enforcement`，DATETIME 字段的闭区间上界同样会被改写并记进 `time_fix`），`llm_response` 保持 null（例外：结果为空时会被填为「当前条件下没有数据」提示），`caliber_note` 同样保持 null（没有模型回复，就没有口径声明）。执行报错也**不触发回炉**（那条通道没有模型可问修复，`retry` 恒为 null）。与 `generator` 同时传入时 `injected_sql` 优先，`generator` 被忽略并打一条 `generator ignored due to injected_sql` 警告 |
 | `debug`        | `False`  | 为 `True` 时将链路每一步的输入/输出各打印一行到 **stderr**（格式见「debug 模式」）。仅影响打印，返回值字段与业务逻辑不变                                                                                     |
+| `tracer`       | `None`   | 非空时接管链路上全部 trace 记录点（`(label, value)` 与 debug 输出同一批数据），供 Web 壳直播阶段进度（见 `docs/WEB_DEMO_PLAN.md`）；不传时行为与现状一致，回调抛出的异常由调用方负责 |
 
 `generator` 与 `injected_sql` 至少提供一个，否则抛 `ValueError`。生成器签名为 `Callable[[str, str, date], GeneratedSql]`（问题、schema 文本、基准日期）。
 

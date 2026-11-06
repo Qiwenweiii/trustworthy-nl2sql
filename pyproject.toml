@@ -13,6 +13,10 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 
 [project.scripts]
 data-agent = "data_agent.cli:main"
