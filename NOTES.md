@@ -102,8 +102,8 @@ SQL 跑成功之后，用 `is_result_empty(result.rows)` 按**本次结果的形
 
 - `ORDER_SCOPE_PAID`（:15）/ `METRICS`（:22）：指标登记表——名称、同义词、数据表、时间字段（只登记不校验）、口径公式（只登记不校验）、必需过滤条件（订单范围）。
 - `DIMENSIONS`（:45）：唯一维度登记表——名称、别名、绑定的列、枚举取值、`applies_to`。
-- `COLUMN_NOTES`（:82）：渲染进提示词的中文列说明，键形如 `"orders.amount"`。
-- `CALIBER_ALIASES`（:102）/ `ENTITY_NOUNS`（:106）/ `GRAMMAR_WORDS`（:108）/ `TIME_PHRASES`（:117）/ `TIME_PATTERNS`（:123）/ `TIME_HINT_CHARS`（:132）/ `DIMENSION_HINT_WORDS`（:138）/ `SKIPPABLE_CHARS`（:143）：拒答判定"涂色留残片"用的词表与字符集。
+- `COLUMN_NOTES`（:85）：渲染进提示词的中文列说明，键形如 `"orders.amount"`。
+- `CALIBER_ALIASES`（:105）/ `ENTITY_NOUNS`（:109）/ `GRAMMAR_WORDS`（:111）/ `TIME_PHRASES`（:120）/ `TIME_PATTERNS`（:126）/ `TIME_HINT_CHARS`（:135）/ `DIMENSION_HINT_WORDS`（:141）/ `SKIPPABLE_CHARS`（:146）：拒答判定"涂色留残片"用的词表与字符集。
 - `REASON_CODES`（:146）：`check_question` 结论里 `reason_code` 的全部取值。
 
 ---
@@ -259,9 +259,9 @@ SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先
 | `dimension_values` / `time_terms` / `ignored_fragments` | 三条放行规则各自放过了什么，留痕给 debug 用，不参与拒答 |
 | `message` | 拒答文案，点名缺哪个词 + 列出当前支持的指标与维度；放行时为 `None` |
 
-**判据是反向覆盖，不是正向匹配**：词表把问题"涂色"（最长优先），没被涂到的连续片段就是缺口。R3「上个月新客销售额」能正常匹配到指标「销售额」，所以只看"有没有匹配到指标"永远抓不到它——缺口在残片里。词表来源（都在 `semantic_tables.py`）：指标别名（`METRICS`，:22）、口径词 `CALIBER_ALIASES`（:102，来自销售额定义里已有的含税/不含税两种算法）、维度别名与枚举取值（`DIMENSIONS`，:45）、时间表达 `TIME_PHRASES`（:117）/`TIME_PATTERNS`（:123）、业务对象与语法词 `ENTITY_NOUNS`（:106）/`GRAMMAR_WORDS`（:108）。指标匹配（`match_metric_in`）不自建实现，import 自 `services/metrics.py`——拒答与强制注入共用同一份判据（二期 2b 去重，见 metrics 模块小节）。
+**判据是反向覆盖，不是正向匹配**：词表把问题"涂色"（最长优先），没被涂到的连续片段就是缺口。R3「上个月新客销售额」能正常匹配到指标「销售额」，所以只看"有没有匹配到指标"永远抓不到它——缺口在残片里。词表来源（都在 `semantic_tables.py`）：指标别名（`METRICS`，:22）、口径词 `CALIBER_ALIASES`（:105，来自销售额定义里已有的含税/不含税两种算法）、维度别名与枚举取值（`DIMENSIONS`，:45）、时间表达 `TIME_PHRASES`（:120）/`TIME_PATTERNS`（:126）、业务对象与语法词 `ENTITY_NOUNS`（:109）/`GRAMMAR_WORDS`（:111）。指标匹配（`match_metric_in`）不自建实现，import 自 `services/metrics.py`——拒答与强制注入共用同一份判据（二期 2b 去重，见 metrics 模块小节）。
 
-**三条放行规则**（`_residue_runs` :78 之后逐段判，宁可放过不误杀）：残片等于某个已登记的枚举取值放过；残片与维度别名紧邻（`_touches_dimension` :99，"抖音渠道"里的"抖音"）当取值放过——取值合不合法属于下一步的"维度取值校验"，本步不管；整段残片的每个字都落在 `TIME_HINT_CHARS`（semantic_tables.py:132）里就当时间表达放过（`前三个月`、`过去半年`、`今年以来`）。收紧到"整段都像时间"而不是"沾一个时间字符就放"，否则「月度环比」会一起漏过去。单字残片（口语尾巴"怎么样"剩下的"样"）只进 `ignored_fragments`，不做拒答依据。
+**三条放行规则**（`_residue_runs` :78 之后逐段判，宁可放过不误杀）：残片等于某个已登记的枚举取值放过；残片与维度别名紧邻（`_touches_dimension` :99，"抖音渠道"里的"抖音"）当取值放过——取值合不合法属于下一步的"维度取值校验"，本步不管；整段残片的每个字都落在 `TIME_HINT_CHARS`（semantic_tables.py:135）里就当时间表达放过（`前三个月`、`过去半年`、`今年以来`）。收紧到"整段都像时间"而不是"沾一个时间字符就放"，否则「月度环比」会一起漏过去。单字残片（口语尾巴"怎么样"剩下的"样"）只进 `ignored_fragments`，不做拒答依据。
 
 **不抛异常**：判不出缺口就放行；唯一例外是空问题，返回 `allowed=False` + `empty_question`。
 
@@ -319,7 +319,7 @@ SQL 文本扫描统一底座：一次分段，三份投影。二期 2a 把原先
 - 输入：`db_path`。
 - 返回：一段多行文本，形如 `"表 orders:\n  - amount REAL  -- 订单金额（元，含税）"`。
 - 错误：`sqlite3.OperationalError`（库文件不存在）；`RuntimeError`（库里没有业务表）。
-- 备注从哪来：查 `COLUMN_NOTES`（`semantic_tables.py:82`），键长这样 `"orders.amount"`。
+- 备注从哪来：查 `COLUMN_NOTES`（`semantic_tables.py:85`），键长这样 `"orders.amount"`。
 - 旧版本文档在这里写过一个 `note` 键，是笔误：`evaluate_case` 的断言结果里没有 `note` 这个字段（只有 `observed` 承担面向人的说明），本版按实际代码删掉了这条。
 
 ---

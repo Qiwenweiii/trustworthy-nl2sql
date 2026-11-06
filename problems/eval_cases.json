@@ -20,7 +20,7 @@
       "K1 的期望值 414786.30 / 354636.03 绑定当前 scripts/init_db.py 的随机种子 SEED=20261029 与 ORDERS_PER_MONTH=160，改种子或改月度订单数需重算期望值",
       "S2 的 result_row_count=40 绑定 init_db.py 的 customers size=40，改规模需同步改期望值",
       "requires_data_months / forbids_data_months 由 runner 拿 DB 实际月份校验，不在代码里硬编码数据窗口",
-      "v2 golden set（T/S/C/D/V/M 前缀）的期望值绑 scripts/init_db.py 的 SEED=20261029 与近 6 个完整自然月窗口（tests/test_init_db.py 钉死）；换种子/换窗口需按参考 SQL 重算。D21/D22 是登记表缺口探针：城市名筛选当前会被拒答层拦（unknown_qualifier），评测按『应出数』断言，基线必红，补齐城市取值登记后即转绿"
+      "v2 golden set（T/S/C/D/V/M 前缀）的期望值绑 scripts/init_db.py 的 SEED=20261029 与近 6 个完整自然月窗口（tests/test_init_db.py 钉死）；换种子/换窗口需按参考 SQL 重算。D21/D22 是登记表缺口探针：曾量化「城市名筛选被拒答层拦（unknown_qualifier）」这一缺口，评测按『应出数』断言、基线里明知会红；城市取值已于 2026-11-06 登记进 DIMENSIONS，两条探针预期在阶段 1 验收轮转绿"
     ],
     "cases": 57
   },

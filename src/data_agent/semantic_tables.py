@@ -60,6 +60,9 @@ DIMENSIONS: dict[str, dict] = {
         "name": "城市",
         "aliases": ["城市", "所在城市"],
         "column": "customers.city",
+        # 取值来自演示库 customers.city 的 distinct 清单（阶段 1 收口时补登记，
+        # 让 D21/D22 缺口探针转绿；换种子/换库时同步更新，与 test_init_db 同理）
+        "enum": ["杭州", "武汉", "上海", "北京", "南京", "成都", "广州", "深圳"],
         "applies_to": "*",
     },
     "客户类型": {
