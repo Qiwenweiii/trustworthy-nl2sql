@@ -177,3 +177,30 @@ def test_timeout_is_not_retried(demo_db, monkeypatch):
     assert outcome["status"] == "timeout"
     assert outcome["retry"] is None
     assert len(gen.calls) == 1
+
+
+def test_kd001_deletion_repair_now_lands_inside_block(demo_db):
+    """KD-001 未救回现场的端到端复刻（阶段 4）：首稿把口径写在外层派生表上，
+    块感知注入补进内层、外层残留照样执行报错→回炉；模型只做删除式修复
+    （删外层谓词、没往里层挪），复核时注入必须补进**内层块**。
+    旧文本级实现两投皆红：首投 already_present 误判不动手，回炉后补回顶层
+    同一错位置——本测试在旧实现上必红。"""
+    first = (
+        "SELECT cnt FROM (SELECT COUNT(*) AS cnt FROM orders) AS t "
+        "WHERE status = 'paid'"
+    )
+    repair = "SELECT cnt FROM (SELECT COUNT(*) AS cnt FROM orders) AS t"
+    gen = ScriptedGenerator([first, repair])
+    outcome = _ask(gen, demo_db, question="总订单数是多少")
+    assert len(gen.calls) == 2
+    assert outcome["status"] == "ok"
+    assert outcome["result"]["rows"] == [{"cnt": 3}]
+    assert (
+        outcome["sql"]
+        == "SELECT cnt FROM (SELECT COUNT(*) AS cnt FROM orders WHERE status = 'paid') AS t"
+    )
+    assert outcome["enforcement"]["changed"] is True
+    assert [a["type"] for a in outcome["enforcement"]["actions"]] == ["added"]
+    assert outcome["retry"]["result"] == "ok"
+    assert "no such column" in outcome["retry"]["db_error"].lower()
+    assert outcome["retry"]["regenerated_sql"] == repair

@@ -7,8 +7,10 @@ K1 的教训是"订单范围靠模型自觉"不可靠：同一个问题有时写
 
 处理范围（本步）：只强制"订单范围"这一类条件；时间字段与口径公式在这里只登记，
 边界写法由 time_boundary 模块校验（语义层第二步），口径公式仍不校验。
-SQL 改写按演示库常见形态（单条 SELECT，可选 WHERE / GROUP BY / ORDER BY /
-LIMIT）做文本级手术；无法识别形态时宁可什么都不加，也不做危险的猜测。
+SQL 改写按查询块进行（阶段 4）：必需条件的**判定**只认直接引用指标表那个查询块内的
+谓词，补写也只落进那个块；块外（如派生表外层）的错误位置谓词不删不动，交给执行
+报错与回炉处理。形态读不懂（括号不配对）、块定位不唯一时宁可什么都不加，
+也不做危险的猜测。
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from __future__ import annotations
 import re
 
 from ..semantic_tables import METRICS
-from .sql_text import SqlScanError, mask_sql
+from .sql_text import SqlScanError, in_spans, mask_sql, split_query_blocks
 
 # 谓词位置用掩码文本定位（字符串/注释遮蔽、长度不变），谓词内容从原文切片取。
 # 谓词正则直接扫原文：极端情况（字符串字面量里恰好出现 status='xxx'）会误判，
@@ -76,7 +78,7 @@ def enforce_metric_filters(question: str, sql: str) -> tuple[str, dict | None]:
             return sql, record
 
         for flt in metric["required_filters"]:
-            sql, actions = _ensure_filter(sql, flt)
+            sql, actions = _ensure_filter(sql, flt, metric["table"])
             record["actions"].extend(actions)
             if any(action["type"] in ("added", "conflict_replaced") for action in actions):
                 record["changed"] = True
@@ -88,22 +90,46 @@ def enforce_metric_filters(question: str, sql: str) -> tuple[str, dict | None]:
     return sql, record
 
 
-def _ensure_filter(sql: str, flt: dict) -> tuple[str, list[dict]]:
-    """保证单个必需条件在 SQL 里成立：缺失补上，冲突改写，已满足不动。"""
-    predicates = list(_iter_predicates(sql, flt))
+def _ensure_filter(sql: str, flt: dict, table: str) -> tuple[str, list[dict]]:
+    """保证单个必需条件在"直接引用指标表的查询块"里成立：缺失补上，冲突改写，已满足不动。
+
+    块外（如派生表外层）的同列谓词一律不计数、不改动——那是模型的产物，
+    执行报错后回炉处理（阶段 4 裁决：注入不删模型谓词）。
+    """
+    targets = [
+        block for block in split_query_blocks(sql) if table.lower() in block["tables"]
+    ]
+    if len(targets) != 1:
+        if targets:
+            return sql, [
+                {
+                    "type": "skipped",
+                    "detail": f"多个查询块直接引用 {table} 表，条件位置不唯一，未注入 {flt['sql']}",
+                }
+            ]
+        return sql, [
+            {
+                "type": "skipped",
+                "detail": f"未能把 {table} 表引用归位到查询块，未注入 {flt['sql']}",
+            }
+        ]
+    block = targets[0]
+
+    predicates = [
+        item
+        for item in _iter_predicates(sql, flt)
+        if in_spans(block["own_spans"], item["start"])
+    ]
     if not predicates:
-        new_sql = _append_where_condition(sql, flt["sql"])
+        new_sql = _append_where_condition(sql, flt["sql"], block)
         if new_sql is None:
             return sql, [
                 {"type": "skipped", "detail": f"无法定位 WHERE 插入点，未注入 {flt['sql']}"}
             ]
-        return new_sql, [
-            {
-                "type": "added",
-                "to": flt["sql"],
-                "detail": f"缺少必需条件，系统补入 {flt['sql']}",
-            }
-        ]
+        detail = f"缺少必需条件，系统补入 {flt['sql']}"
+        if not block["is_top"]:
+            detail += f"（补进直接查询 {table} 表的子查询块内）"
+        return new_sql, [{"type": "added", "to": flt["sql"], "detail": detail}]
 
     unsatisfied = [item for item in predicates if not item["satisfied"]]
     if not unsatisfied:
@@ -180,8 +206,9 @@ def _token_depths(masked: str) -> list[int]:
     return depths
 
 
-def _append_where_condition(sql: str, fragment: str) -> str | None:
-    """把条件并进顶层 WHERE；没有 WHERE 就在 GROUP BY/HAVING/ORDER BY/LIMIT 之前插入。
+def _append_where_condition(sql: str, fragment: str, block: dict) -> str | None:
+    """把条件并进指定查询块自己的 WHERE；块内没有 WHERE 就在其 GROUP BY/HAVING/
+    ORDER BY/LIMIT 之前（或块尾）插入。
 
     返回 None 表示找不到安全的插入点（如 WHERE 后接的是括号残片），调用方应保持原样。
     """
@@ -190,14 +217,14 @@ def _append_where_condition(sql: str, fragment: str) -> str | None:
     tokens = [
         (m.start(), m.end(), m.group(0))
         for m in _CLAUSE_KEYWORD_RE.finditer(masked)
-        if depths[m.start()] == 0
+        if depths[m.start()] == block["depth"] and in_spans(block["own_spans"], m.start())
     ]
 
     where_pos = next((t for t in tokens if re.fullmatch(r"(?i)where", t[2])), None)
     if where_pos:
         clause_end = next(
             (t[0] for t in tokens if t[0] > where_pos[1]),
-            len(sql),
+            block["end"],
         )
         expr = sql[where_pos[1] : clause_end].strip()
         if clause_end == len(sql):
@@ -208,17 +235,22 @@ def _append_where_condition(sql: str, fragment: str) -> str | None:
         if not expr:
             return None
         # 原条件整体加括号再 AND，防止 a OR b 被 AND 抢优先级
-        rest = sql[clause_end:].strip()
+        rest = sql[clause_end : block["end"]].strip()
         joiner = " " if rest else ""
-        return f"{sql[: where_pos[0]]}WHERE ({expr}) AND {fragment}{joiner}{rest}"
+        head = f"{sql[: where_pos[0]]}WHERE ({expr}) AND {fragment}"
+        return f"{head}{joiner}{rest}{sql[block['end'] :]}"
 
-    insert_at = min((t[0] for t in tokens if t[0] > 0), default=len(sql))
-    head = sql[:insert_at].rstrip()
-    tail = sql[insert_at:].strip()
+    insert_at = min(
+        (t[0] for t in tokens if block["start"] <= t[0] < block["end"] and t[0] > block["start"]),
+        default=block["end"],
+    )
+    head = sql[block["start"] : insert_at].rstrip()
+    tail = sql[insert_at : block["end"]].strip()
     if not tail:
         while head.endswith(";"):
             head = head[:-1].rstrip()
     if not head:
         return None
     joined = f"{head} WHERE {fragment}"
-    return f"{joined} {tail}" if tail else joined
+    segment = f"{joined} {tail}" if tail else joined
+    return f"{sql[: block['start']]}{segment}{sql[block['end'] :]}"

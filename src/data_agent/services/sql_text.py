@@ -255,3 +255,105 @@ _FROM_JOIN_RE = re.compile(
 def referenced_tables(sql: str) -> list[tuple[str, str | None]]:
     """FROM/JOIN 之后的 (表名, 别名) 清单；没写别名时别名为 None。"""
     return [(match.group(1), match.group(2)) for match in _FROM_JOIN_RE.finditer(sql)]
+
+
+# ---------------------------------------------------------------------------
+# 查询块切分（阶段 4：条件注入的块感知底座）
+
+_SELECT_HEAD_RE = re.compile(r"\s*select\b", re.IGNORECASE)
+_BLOCK_TABLE_REF_RE = re.compile(
+    r"\b(?:from|join)\s+(?:\w+\.)?([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE
+)
+
+
+def split_query_blocks(sql: str) -> list[dict]:
+    """把 SQL 切成查询块清单（文档序：外层在前、内层在后），位置全部对原文成立。
+
+    块 = 一个 SELECT 作用域：顶层语句一块；每对括号内首个关键字是 SELECT 就再切一块
+    （派生表、CTE 支、IN (SELECT ...) 都算）。函数括号、条件括号不是块。
+    每块字段：
+    - start/end: 块正文区间（顶层为整句；子块不含外层括号）
+    - depth: 块内代码的括号深度（顶层 0，一层子查询 1）
+    - tables: 本块 FROM/JOIN 直接引用的表名集合（小写，不含子查询别名引用）
+    - own_spans: 本块正文扣掉所有子块（含其括号）后的自有区间清单
+    - is_top: 是否顶层块
+    括号不配对与引号未闭合同口径：抛 SqlScanError，调用方"读不懂不动手"。
+    """
+    masked = mask_sql(sql)
+    n = len(sql)
+
+    depths = [0] * n
+    depth = 0
+    open_stack: list[int] = []
+    close_of: dict[int, int] = {}
+    for i, ch in enumerate(masked):
+        depths[i] = depth
+        if ch == "(":
+            open_stack.append(i)
+            depth += 1
+        elif ch == ")":
+            if not open_stack:
+                raise SqlScanError("括号不配对：多余的右括号")
+            open_pos = open_stack.pop()
+            depth -= 1
+            close_of[open_pos] = i
+    if open_stack:
+        raise SqlScanError("括号不配对：未闭合的左括号")
+
+    top = {
+        "start": 0,
+        "end": n,
+        "depth": 0,
+        "tables": set(),
+        "own_spans": [(0, n)],
+        "child_spans": [],
+        "is_top": True,
+    }
+    blocks: list[dict] = [top]
+
+    def _carve(parent: dict, lo: int, hi: int, base_depth: int) -> None:
+        """在 parent 的 [lo, hi) 里找查询括号对：登记为子块并递归，非查询括号穿透。"""
+        pos = lo
+        while pos < hi:
+            if masked[pos] != "(":
+                pos += 1
+                continue
+            close = close_of[pos]
+            if _SELECT_HEAD_RE.match(masked, pos + 1, close):
+                block = {
+                    "start": pos + 1,
+                    "end": close,
+                    "depth": base_depth + 1,
+                    "tables": set(),
+                    "own_spans": [(pos + 1, close)],
+                    "child_spans": [],
+                    "is_top": False,
+                }
+                blocks.append(block)
+                parent["child_spans"].append((pos, close + 1))
+                _carve(block, pos + 1, close, base_depth + 1)
+            else:
+                _carve(parent, pos + 1, close, base_depth + 1)
+            pos = close + 1
+
+    _carve(top, 0, n, 0)
+
+    for block in blocks:
+        block["own_spans"] = _subtract(block["start"], block["end"], block["child_spans"])
+        for lo, hi in block["own_spans"]:
+            for match in _BLOCK_TABLE_REF_RE.finditer(masked, lo, hi):
+                block["tables"].add(match.group(1).lower())
+    return blocks
+
+
+def _subtract(start: int, end: int, holes: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """[start, end) 扣掉若干互不重叠的挖空区间，剩下的自有区间清单。"""
+    spans = []
+    pos = start
+    for hole_start, hole_end in sorted(holes):
+        if hole_start > pos:
+            spans.append((pos, hole_start))
+        pos = max(pos, hole_end)
+    if pos < end:
+        spans.append((pos, end))
+    return spans
