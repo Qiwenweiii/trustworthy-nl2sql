@@ -40,7 +40,7 @@
 
 **阶段规则（为什么这样判就够用）**：
 
-- 用例各归各的阶段（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（done，S1/S2 + 攻击面 A1–A6 共 8 条注入用例），v1 = 可信层（done，2026-11-04 转的，口径/空结果/拒答 9 条），v2 = 基线层（done，2026-11-06 入文件并于同日前后完成毕业：golden set 40 条真实分布问题 + 锚定种子标准结果；毕业两轮 `--stage v2 --repeats 3` 各 39/40，唯一红 D15 走用例级 `known_defect` 挂账豁免——机制见 §4.7，毕业账见 `docs/EVAL_DESIGN.md` §3）。
+- 用例各归各的阶段（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（done，S1/S2 + 攻击面 A1–A6 共 8 条注入用例），v1 = 可信层（done，2026-11-04 转的，口径/空结果/拒答 9 条），v2 = 基线层（done，2026-11-06 入文件并于同日前后完成毕业：golden set 40 条真实分布问题 + 锚定种子标准结果；毕业两轮 `--stage v2 --repeats 3` 各 39/40，唯一红 D15 走用例级 `known_defect` 挂账豁免——机制见 §4.7，毕业账见 `docs/EVAL_DESIGN.md` §3。2026-11-07 阶段 4 块感知注入落地后验收轮 40/40 全绿，KD-001 已按释放条件销账、当前零挂账，快照 `docs/eval_report_v2_stage4_accept.json`）。
 - `--stage v0` 是日常模式：只跑该阶段用例，报告只出这阶段的结果，干净、直接。
 - `--all` 是验收模式：跑所有阶段，出"距离完整规范还差什么"的差距报告，只在阶段验收时手动跑，不进日常流程。
 - **退出码只看 done 阶段的失败**（`compute_exit_code`，run_eval.py:443；done 清单来自 `judge.done_stage_ids`，judge.py:473），**且 done 阶段里带 `known_defect` 挂账豁免的用例失败不置错**（§4.7）。规则数据化在 `meta.stages.status` 里 —— v1 于 2026-11-04、v2 于 2026-11-06 转成 `done`（done = v0 + v1 + v2），转 v2 时**代码也一行没改**，只改了用例文件。判别性对照做了两轮：v1 转 done 时同一条被人为改坏的 K1 断言 pending=0 / done=1；v2 转 done 时同一条被人为改坏的 D23 断言（`result_row_count` 期望 8→99）pending=0 / done=1，复原后确定性通路退出码 0。
@@ -321,7 +321,7 @@ CLI   --cases    默认 problems/eval_cases.json
                    pending 阶段失败仅报告、不置错。done 现在是 [v0, v1, v2]，
                    任一条阶段的失败都会把 --all 置成 1
         stage 模式 本阶段 overview.fail > 0 即 1，**不看 done/pending，也不看豁免**
-                   （成绩单与门禁分离：--stage v2 里 D15 的红照样把退出码置 1）
+                   （成绩单与门禁分离：带 `known_defect` 挂账题在 --stage 里的红照样把退出码置 1）
                    （--stage v1 的退出码证明不了状态位生效，要验只能看 --all）
         之后 environment > 0 -> 2；否则 0
         （--strict 已随失败分类一起删除——没有"未实现"分类了，这个开关无事可做）
@@ -335,7 +335,7 @@ CLI   --cases    默认 problems/eval_cases.json
           load_cases 直接报错（"挂账豁免"字样）；键形状不对、四字段有空值同样载入即报错。
         - 解除是数据驱动：挂账题在某轮 3/3 全绿（= 修复生效）后的收口 commit 删掉该键，
           退出码自动重新开始拦它；不靠人记，靠用例文件里的红绿账。
-        - 判别性测试 9 条：test_eval_judge.py 5 条（载入接受/拒挂 v0/v1/拒坏形状/真实文件只 D15 挂着），
+        - 判别性测试 9 条：test_eval_judge.py 5 条（载入接受/拒挂 v0/v1/拒坏形状/实况账——阶段 4 销账后全文件零挂账），
           test_eval_report.py 4 条（all 模式豁免置 0 + 反向守卫、stage 模式不吃豁免、
           exempted 计数、render 账本四字段且 ❌ 保留、run_cases 透传）。
 
@@ -418,8 +418,8 @@ cases[]
   assertions[]           {check, expect, root_cause, capability?, why, landing}
   known_defect           缺省 | {id, root_cause, fix_stage, release_condition}
                          挂账豁免账本（只许 v2 用例携带，v0/v1 载入即报错；细则见 §4.7）；
-                         当前唯一挂账：D15 / KD-001（文本级口径注入定位不到跨子查询条件，
-                         修复归属阶段 4 AST 改写）
+                         当前零挂账——曾挂 D15 / KD-001（文本级口径注入定位不到跨子查询条件），
+                         阶段 4 块感知注入落地后于 2026-11-07 验收轮销账，机制保留备用
 ```
 
 **已删除的字段**：用例级 `failure_type`、断言级 `on_fail`（失败预设分类）。用例里残留任何一个，`load_cases` 报"阶段制已删除失败预设分类"。
