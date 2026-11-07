@@ -1617,12 +1617,6 @@
       "expected_status": "ok",
       "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT channel, COUNT(*) FROM orders WHERE status = 'paid' GROUP BY channel ORDER BY 2 DESC LIMIT 1）",
       "capability": "基线层",
-      "known_defect": {
-        "id": "KD-001",
-        "root_cause": "文本级口径注入无法跨子查询定位条件位置：模型把 status = 'paid' 写到派生表外层（该层无此列）时，enforcement 按文本判 already_present 不动手；回炉的删除式修复又被判缺失、补回同一错位置，两投皆 exec_error（两轮现场证据见 docs/RETROSPECTIVE.md 复盘 003）",
-        "fix_stage": "阶段 4（AST 条件定位改写）——本题即其立项证据",
-        "release_condition": "AST 修复落地后，任一验收轮本题 3/3 采样全绿，下一笔收口提交删除本块、恢复普通门禁用例"
-      },
       "assertions": [
         {
           "check": "status_in",

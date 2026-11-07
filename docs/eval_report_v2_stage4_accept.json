@@ -1,0 +1,5160 @@
+{
+ "overview": {
+  "anchor_today": "2026-10-30",
+  "repeats": 3,
+  "cases": 40,
+  "pass": 40,
+  "fail": 0,
+  "exempted": 0,
+  "environment": 0,
+  "unreliable_pass": 0,
+  "verdict_values": [
+   "pass"
+  ]
+ },
+ "run_context": {
+  "mode": "stage",
+  "stage": "v2",
+  "stages": {
+   "v0": {
+    "status": "done",
+    "promise": "只读防线：静态 guard 拦截危险/非只读 SQL，blocked 一律不进执行层"
+   },
+   "v1": {
+    "status": "done",
+    "promise": "可信层：口径声明（不含澄清）、空结果标记、语义拒答"
+   },
+   "v2": {
+    "status": "done",
+    "promise": "基线层：golden set（40 条真实分布问题 + 锚定种子标准结果）度量执行准确率；失败进 --all 退出码门禁（known_defect 挂账豁免题除外）"
+   }
+  },
+  "cases_path": "/Users/qiwenwei/Desktop/大模型应用开发/LLM-Projects/data-agent/problems/eval_cases.json",
+  "db_path": "/Users/qiwenwei/Desktop/大模型应用开发/LLM-Projects/data-agent/data/demo.db",
+  "db_months": [
+   "2026-04",
+   "2026-05",
+   "2026-06",
+   "2026-07",
+   "2026-08",
+   "2026-09"
+  ],
+  "model": "glm-4.6v",
+  "used_llm": true,
+  "note": "阶段4 验收轮（KD-001 销账轮）：7 批前台连跑合并——b1 T01-T06 / b2 S01-S06 / b3 T07-T10,C01-C02 / b4 C03-C04,D11-D14 / b5 D15,D21-D24,D31 / b6 D32,D33,V01-V04 / b7 M01-M04；同一实现同一锚定日，repeats=3；分批合并口径与 v2 基线快照一致。"
+ },
+ "by_stage": [
+  {
+   "stage": "v2",
+   "total": 40,
+   "pass": 40,
+   "fail": 0,
+   "environment": 0
+  }
+ ],
+ "cases": [
+  {
+   "id": "T01",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "上个月销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE (order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE paid_at >= '2026-09-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T02",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "上上个月的含税销售额是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7)='2026-08'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE order_date BETWEEN '2026-08-01' AND '2026-08-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE order_date BETWEEN '2026-08-01' AND '2026-08-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE order_date BETWEEN '2026-08-01' AND '2026-08-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T03",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "今年7月到9月的销售额（含税）一共是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) IN ('2026-07','2026-08','2026-09')）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE paid_at >= '2026-07-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-07-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-07-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-07-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date BETWEEN '2026-07-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) FROM orders WHERE order_date BETWEEN '2026-07-01' AND '2026-09-30' AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T04",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "今年第三季度的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) IN ('2026-07','2026-08','2026-09')）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE\n    paid_at >= '2026-07-01' AND paid_at < '2026-10-01'\n    AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-07-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-07-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-07-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE order_date BETWEEN '2026-07-01' AND '2026-09-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date BETWEEN '2026-07-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T05",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "今年上半年的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) IN ('2026-04','2026-05','2026-06')）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE (order_date BETWEEN '2026-01-01' AND '2026-06-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE paid_at >= '2026-01-01' AND paid_at < '2026-07-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-01-01' AND '2026-06-30'",
+        "to": "paid_at >= '2026-01-01' AND paid_at < '2026-07-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-06-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-01-01' AND paid_at < '2026-07-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE (order_date BETWEEN '2026-01-01' AND '2026-06-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T06",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "今年的销售额（含税）一共是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE (order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE order_date BETWEEN '2026-01-01' AND '2026-12-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T07",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "2026年4月到9月的销售额（含税）一共是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND order_date BETWEEN '2026-04-01' AND '2026-09-30'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) as total_sales\nFROM orders\nWHERE order_date BETWEEN '2026-04-01' AND '2026-09-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) \nFROM orders \nWHERE (order_date BETWEEN '2026-04-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date BETWEEN '2026-04-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T08",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "2026年6月15日当天的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND order_date='2026-06-15'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date = '2026-06-15') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE order_date = '2026-06-15' \n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) as total_sales\nFROM orders\nWHERE order_date = '2026-06-15'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T09",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "本月的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7)='2026-10'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE order_date BETWEEN '2026-10-01' AND '2026-10-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE order_date BETWEEN '2026-10-01' AND '2026-10-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE status = 'paid'\n  AND paid_at >= '2026-10-01' AND paid_at < '2026-11-01'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-10-01' AND '2026-10-31'",
+        "to": "paid_at >= '2026-10-01' AND paid_at < '2026-11-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-10-31' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-10-01' AND paid_at < '2026-11-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "T10",
+   "stage": "v2",
+   "category": "时间范围",
+   "question": "昨天的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND order_date='2026-10-29'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date = '2026-10-29') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE paid_at = '2026-10-29' AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date = '2026-10-29') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "S01",
+   "stage": "v2",
+   "category": "聚合形态",
+   "question": "上个月的订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) FROM orders WHERE (order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) FROM orders WHERE (order_date >= '2026-09-01' AND order_date <= '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) FROM orders WHERE (order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "S02",
+   "stage": "v2",
+   "category": "聚合形态",
+   "question": "今年一共有多少成交订单数",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS 成交订单数\nFROM orders\nWHERE strftime('%Y', order_date) = '2026'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(id)\nFROM orders\nWHERE status = 'paid'\n  AND order_date BETWEEN '2026-01-01' AND '2026-12-31'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) FROM orders WHERE order_date BETWEEN '2026-01-01' AND '2026-12-31' AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "S03",
+   "stage": "v2",
+   "category": "聚合形态",
+   "question": "上个月各渠道的销售额（含税）分别是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT channel, ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09' GROUP BY channel）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT\n    channel,\n    SUM(amount) AS total_sales\nFROM\n    orders\nWHERE (order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid' GROUP BY\n    channel",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT\n    channel,\n    SUM(amount) AS total_sales\nFROM\n    orders\nWHERE\n    order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND status = 'paid'\nGROUP BY\n    channel",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT\n    channel,\n    SUM(amount) AS total_sales\nFROM\n    orders\nWHERE (order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid' GROUP BY\n    channel",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "S04",
+   "stage": "v2",
+   "category": "聚合形态",
+   "question": "上个月按客户类型看订单数分别是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT c.segment, COUNT(*) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND substr(o.order_date,1,7)='2026-09' GROUP BY c.segment）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT\n    c.segment AS 客户类型,\n    COUNT(o.id) AS 订单数\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.segment",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT\n    c.segment,\n    COUNT(o.id) AS order_count\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE (o.order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid' GROUP BY\n    c.segment",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT\n    c.segment,\n    COUNT(o.id) AS order_count\nFROM\n    orders AS o\nJOIN\n    customers AS c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.segment",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "S05",
+   "stage": "v2",
+   "category": "聚合形态",
+   "question": "今年6月和7月的销售额（含税）分别是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT substr(order_date,1,7), ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) IN ('2026-06','2026-07') GROUP BY 1）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT strftime('%Y-%m', paid_at) AS month, SUM(amount) AS total_sales\nFROM orders\nWHERE strftime('%Y-%m', paid_at) IN ('2026-06', '2026-07')\n  AND status = 'paid'\nGROUP BY month\nORDER BY month",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, SUM(amount) AS total_sales\nFROM orders\nWHERE order_date BETWEEN '2026-06-01' AND '2026-07-31'\n  AND status = 'paid'\nGROUP BY month\nORDER BY month",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT strftime('%Y-%m', o.paid_at) AS month, SUM(o.amount) AS total_sales\nFROM orders o\nWHERE o.paid_at >= '2026-06-01' AND o.paid_at < '2026-08-01'\n  AND o.status = 'paid'\nGROUP BY month\nORDER BY month",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "o.paid_at BETWEEN '2026-06-01' AND '2026-07-31'",
+        "to": "o.paid_at >= '2026-06-01' AND o.paid_at < '2026-08-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-07-31' 会漏掉当天 00:00 之后的数据，改写为 o.paid_at >= '2026-06-01' AND o.paid_at < '2026-08-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "S06",
+   "stage": "v2",
+   "category": "聚合形态",
+   "question": "上个月销售额（含税）最高的渠道的销售额是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT channel, ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09' GROUP BY channel ORDER BY 2 DESC LIMIT 1）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT MAX(total_sales) AS max_channel_sales\nFROM (\n    SELECT channel, SUM(amount) AS total_sales\n    FROM orders\n    WHERE order_date BETWEEN '2026-09-01' AND '2026-09-30'\n      AND status = 'paid'\n    GROUP BY channel\n)",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) as max_sales\nFROM orders\nWHERE order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND status = 'paid'\nGROUP BY channel\nORDER BY max_sales DESC\nLIMIT 1",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT MAX(channel_sales) AS max_sales\nFROM (\n    SELECT channel, SUM(amount) AS channel_sales\n    FROM orders\n    WHERE status = 'paid'\n      AND order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    GROUP BY channel\n)",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "C01",
+   "stage": "v2",
+   "category": "口径变体",
+   "question": "今年5月不含税销售额是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount - COALESCE(tax_amount,0)),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7)='2026-05'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount - tax_amount) AS不含税销售额\nFROM orders\nWHERE order_date BETWEEN '2026-05-01' AND '2026-05-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount - tax_amount) AS不含税销售额\nFROM orders\nWHERE order_date BETWEEN '2026-05-01' AND '2026-05-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount - tax_amount)\nFROM orders\nWHERE order_date BETWEEN '2026-05-01' AND '2026-05-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "C02",
+   "stage": "v2",
+   "category": "口径变体",
+   "question": "今年上半年的不含税销售额是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount - COALESCE(tax_amount,0)),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) IN ('2026-04','2026-05','2026-06')）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount - tax_amount) AS total_sales\nFROM orders\nWHERE paid_at >= '2026-01-01' AND paid_at < '2026-07-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-01-01' AND '2026-06-30'",
+        "to": "paid_at >= '2026-01-01' AND paid_at < '2026-07-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-06-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-01-01' AND paid_at < '2026-07-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount - tax_amount)\nFROM orders\nWHERE order_date BETWEEN '2026-01-01' AND '2026-06-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount - tax_amount) AS total_sales_without_tax\nFROM orders\nWHERE order_date BETWEEN '2026-01-01' AND '2026-06-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "C03",
+   "stage": "v2",
+   "category": "口径变体",
+   "question": "上个月按支付时间算的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(paid_at,1,7)='2026-09'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE paid_at >= '2026-09-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE paid_at >= '2026-09-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE paid_at >= '2026-09-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "C04",
+   "stage": "v2",
+   "category": "口径变体",
+   "question": "上个月按支付时间算的订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid' AND substr(paid_at,1,7)='2026-09'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(id)\nFROM orders\nWHERE (paid_at >= '2026-09-01' AND paid_at < '2026-10-01') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS order_count\nFROM orders\nWHERE paid_at >= '2026-09-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "conflict_replaced",
+        "from": "status IN ('paid', 'refunded')",
+        "to": "status = 'paid'",
+        "detail": "模型写的 status IN ('paid', 'refunded') 与指标定义冲突，以定义为准改写为 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS order_count\nFROM orders\nWHERE\n  paid_at IS NOT NULL\n  AND status = 'paid'\n  AND paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D11",
+   "stage": "v2",
+   "category": "渠道维度",
+   "question": "上个月app渠道的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09' AND channel='app'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND channel = 'app'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (channel = 'app'\n  AND order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE channel = 'app'\n  AND order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D12",
+   "stage": "v2",
+   "category": "渠道维度",
+   "question": "上个月web渠道的订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09' AND channel='web'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) \nFROM orders \nWHERE (channel = 'web' \n  AND order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) \nFROM orders \nWHERE (order_date BETWEEN '2026-09-01' AND '2026-09-30' \n  AND channel = 'web') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) \nFROM orders \nWHERE order_date BETWEEN '2026-09-01' AND '2026-09-30' \n  AND channel = 'web' \n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D13",
+   "stage": "v2",
+   "category": "渠道维度",
+   "question": "今年miniapp渠道的销售额（含税）一共多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND channel='miniapp'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (channel = 'miniapp'\n  AND order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "llm_error",
+     "sql": null,
+     "guard": null,
+     "enforcement": null,
+     "time_fix": null,
+     "error": {
+      "type": "llm_error",
+      "message": "Request timed out."
+     },
+     "retry": null
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE channel = 'miniapp'\n  AND order_date BETWEEN '2026-01-01' AND '2026-12-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 2,
+   "passing_runs": 2,
+   "verdict": "pass"
+  },
+  {
+   "id": "D14",
+   "stage": "v2",
+   "category": "渠道维度",
+   "question": "上个月offline渠道的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09' AND channel='offline'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND channel = 'offline'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) \nFROM orders \nWHERE channel = 'offline' \n  AND order_date BETWEEN '2026-09-01' AND '2026-09-30' \n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE channel = 'offline'\n  AND status = 'paid'\n  AND paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D15",
+   "stage": "v2",
+   "category": "渠道维度",
+   "question": "今年订单数最多的渠道的订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT channel, COUNT(*) FROM orders WHERE status = 'paid' GROUP BY channel ORDER BY 2 DESC LIMIT 1）",
+   "known_defect": {
+    "id": "KD-001",
+    "root_cause": "文本级口径注入无法跨子查询定位条件位置：模型把 status = 'paid' 写到派生表外层（该层无此列）时，enforcement 按文本判 already_present 不动手；回炉的删除式修复又被判缺失、补回同一错位置，两投皆 exec_error（两轮现场证据见 docs/RETROSPECTIVE.md 复盘 003）",
+    "fix_stage": "阶段 4（AST 条件定位改写）——本题即其立项证据",
+    "release_condition": "AST 修复落地后，任一验收轮本题 3/3 采样全绿，下一笔收口提交删除本块、恢复普通门禁用例"
+   },
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(o.id) AS order_count\nFROM orders o\nWHERE (o.order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid' GROUP BY o.channel\nORDER BY order_count DESC\nLIMIT 1",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(id)\nFROM orders\nWHERE (strftime('%Y', order_date) = '2026') AND status = 'paid' GROUP BY channel\nORDER BY COUNT(id) DESC\nLIMIT 1",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*)\nFROM orders\nWHERE (order_date >= '2026-01-01' AND order_date < '2027-01-01') AND status = 'paid' GROUP BY channel\nORDER BY COUNT(*) DESC\nLIMIT 1",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D21",
+   "stage": "v2",
+   "category": "城市维度",
+   "question": "上海客户的上个月销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(o.amount),2) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND substr(o.order_date,1,7)='2026-09' AND c.city='上海'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT\n    SUM(o.amount) AS total_sales\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE\n    c.city = '上海'\n    AND o.paid_at >= '2026-09-01' AND o.paid_at < '2026-10-01'\n    AND o.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "o.paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "o.paid_at >= '2026-09-01' AND o.paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 o.paid_at >= '2026-09-01' AND o.paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(orders.amount) AS total_sales\nFROM orders\nJOIN customers ON orders.customer_id = customers.id\nWHERE customers.city = '上海'\n  AND orders.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND orders.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "conflict_replaced",
+        "from": "orders.status IN ('paid', 'refunded')",
+        "to": "orders.status = 'paid'",
+        "detail": "模型写的 orders.status IN ('paid', 'refunded') 与指标定义冲突，以定义为准改写为 orders.status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(o.amount) AS total_sales\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE c.city = '上海'\n  AND o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND o.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "conflict_replaced",
+        "from": "o.status IN ('paid', 'refunded')",
+        "to": "o.status = 'paid'",
+        "detail": "模型写的 o.status IN ('paid', 'refunded') 与指标定义冲突，以定义为准改写为 o.status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D22",
+   "stage": "v2",
+   "category": "城市维度",
+   "question": "北京客户的今年订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND c.city='北京'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(*)\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE (c.city = '北京'\n  AND o.order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(o.id)\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE (c.city = '北京'\n  AND strftime('%Y', o.order_date) = '2026') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS order_count\nFROM orders\nJOIN customers ON orders.customer_id = customers.id\nWHERE (customers.city = '北京'\n  AND strftime('%Y', orders.order_date) = '2026') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D23",
+   "stage": "v2",
+   "category": "城市维度",
+   "question": "上个月各城市的销售额（含税）分别是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT c.city, ROUND(SUM(o.amount),2) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND substr(o.order_date,1,7)='2026-09' GROUP BY c.city）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT\n    c.city AS 城市,\n    SUM(o.amount) AS 销售额\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.city\nORDER BY\n    c.city",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT\n    c.city,\n    SUM(o.amount) AS total_sales\nFROM\n    orders AS o\nJOIN\n    customers AS c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.city",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT\n    c.city,\n    SUM(o.amount) AS total_sales\nFROM\n    orders AS o\nJOIN\n    customers AS c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.city\nORDER BY\n    total_sales DESC",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D24",
+   "stage": "v2",
+   "category": "城市维度",
+   "question": "上个月按城市看订单数分别是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT c.city, COUNT(*) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND substr(o.order_date,1,7)='2026-09' GROUP BY c.city）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT\n    c.city,\n    COUNT(o.id) AS order_count\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE (o.order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid' GROUP BY\n    c.city",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT\n    c.city,\n    COUNT(o.id) AS order_count\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE (o.order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid' GROUP BY\n    c.city\nORDER BY\n    c.city",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT\n    c.city,\n    COUNT(o.id) AS order_count\nFROM\n    orders AS o\nJOIN\n    customers AS c ON o.customer_id = c.id\nWHERE (o.order_date BETWEEN '2026-09-01' AND '2026-09-30') AND status = 'paid' GROUP BY\n    c.city\nORDER BY\n    order_count DESC",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D31",
+   "stage": "v2",
+   "category": "客群维度",
+   "question": "上个月企业客群的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(o.amount),2) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND substr(o.order_date,1,7)='2026-09' AND c.segment='企业'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nJOIN customers ON orders.customer_id = customers.id\nWHERE customers.segment = '企业'\n  AND orders.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND orders.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(o.amount) AS total_sales\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE c.segment = '企业'\n  AND o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND o.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(o.amount) AS total_sales\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE c.segment = '企业'\n  AND o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND o.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D32",
+   "stage": "v2",
+   "category": "客群维度",
+   "question": "上个月按客户类型看销售额（含税）分别是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT c.segment, ROUND(SUM(o.amount),2) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND substr(o.order_date,1,7)='2026-09' GROUP BY c.segment）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT\n    c.segment AS 客户类型,\n    SUM(o.amount) AS 销售额\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.segment",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT\n    c.segment AS 客户类型,\n    SUM(o.amount) AS 销售额\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.segment",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT\n    c.segment AS 客户类型,\n    SUM(o.amount) AS 销售额\nFROM\n    orders o\nJOIN\n    customers c ON o.customer_id = c.id\nWHERE\n    o.order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND o.status = 'paid'\nGROUP BY\n    c.segment",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "D33",
+   "stage": "v2",
+   "category": "客群维度",
+   "question": "今年中小企业客群的订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND c.segment='中小企业'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(orders.id) AS order_count\nFROM orders\nJOIN customers ON orders.customer_id = customers.id\nWHERE (customers.segment = '中小企业'\n  AND strftime('%Y', orders.order_date) = '2026') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(orders.id) AS order_count\nFROM orders\nJOIN customers ON orders.customer_id = customers.id\nWHERE customers.segment = '中小企业'\n  AND orders.order_date BETWEEN '2026-01-01' AND '2026-10-30'\n  AND orders.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*)\nFROM orders\nJOIN customers ON orders.customer_id = customers.id\nWHERE (customers.segment = '中小企业'\n  AND strftime('%Y', orders.order_date) = '2026') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "V01",
+   "stage": "v2",
+   "category": "用词覆盖",
+   "question": "上个月的成交额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE paid_at >= '2026-09-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE order_date BETWEEN '2026-09-01' AND '2026-09-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "V02",
+   "stage": "v2",
+   "category": "用词覆盖",
+   "question": "今年的单量一共是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS total_orders\nFROM orders\nWHERE (strftime('%Y', order_date) = '2026') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": null,
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS total_orders\nFROM orders\nWHERE (order_date >= '2026-01-01' AND order_date <= '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(id)\nFROM orders\nWHERE (order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "V03",
+   "stage": "v2",
+   "category": "用词覆盖",
+   "question": "今年6月的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(amount),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7)='2026-06'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE (order_date BETWEEN '2026-06-01' AND '2026-06-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(amount) AS total_sales\nFROM orders\nWHERE order_date >= '2026-06-01' AND order_date <= '2026-06-30'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(amount)\nFROM orders\nWHERE (order_date BETWEEN '2026-06-01' AND '2026-06-30') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "V04",
+   "stage": "v2",
+   "category": "用词覆盖",
+   "question": "今年5月的成交订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid' AND substr(order_date,1,7)='2026-05'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(orders.id)\nFROM orders\nWHERE order_date BETWEEN '2026-05-01' AND '2026-05-31'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) \nFROM orders \nWHERE order_date BETWEEN '2026-05-01' AND '2026-05-31' \n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) FROM orders WHERE status = 'paid' AND order_date BETWEEN '2026-05-01' AND '2026-05-31'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 2,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "M01",
+   "stage": "v2",
+   "category": "组合条件",
+   "question": "今年7月到9月企业客群的销售额（含税）是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT ROUND(SUM(o.amount),2) FROM orders o JOIN customers c ON o.customer_id=c.id WHERE o.status='paid' AND substr(o.order_date,1,7) IN ('2026-07','2026-08','2026-09') AND c.segment='企业'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT SUM(o.amount) AS total_sales\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE c.segment = '企业'\n  AND o.order_date BETWEEN '2026-07-01' AND '2026-09-30'\n  AND o.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT SUM(o.amount) AS total_sales\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE c.segment = '企业'\n  AND o.order_date BETWEEN '2026-07-01' AND '2026-09-30'\n  AND o.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT SUM(o.amount) AS total_sales\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nWHERE c.segment = '企业'\n  AND o.order_date BETWEEN '2026-07-01' AND '2026-09-30'\n  AND o.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "M02",
+   "stage": "v2",
+   "category": "组合条件",
+   "question": "上个月各渠道不含税销售额分别是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT channel, ROUND(SUM(amount - COALESCE(tax_amount,0)),2) FROM orders WHERE status = 'paid' AND substr(order_date,1,7) = '2026-09' GROUP BY channel）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT\n    channel,\n    SUM(amount - tax_amount) AS不含税销售额\nFROM\n    orders\nWHERE\n    order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND status = 'paid'\nGROUP BY\n    channel",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT\n    channel,\n    SUM(amount - tax_amount) AS 不含税销售额\nFROM\n    orders\nWHERE\n    order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND status = 'paid'\nGROUP BY\n    channel",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT\n    channel,\n    SUM(amount - tax_amount) AS不含税销售额\nFROM\n    orders\nWHERE\n    order_date BETWEEN '2026-09-01' AND '2026-09-30'\n    AND status = 'paid'\nGROUP BY\n    channel",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "销售额",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "M03",
+   "stage": "v2",
+   "category": "组合条件",
+   "question": "今年app渠道的订单数一共是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid' AND channel='app'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) FROM orders\nWHERE (channel = 'app'\nAND order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(id)\nFROM orders\nWHERE (channel = 'app'\n  AND order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(orders.id) AS total_orders\nFROM orders\nWHERE (orders.channel = 'app'\n  AND orders.order_date BETWEEN '2026-01-01' AND '2026-12-31') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_correct",
+        "detail": "order_date 只有日期，闭区间边界不需要改（抽样 200 条 orders.order_date 取值，只有日期）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 3,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  },
+  {
+   "id": "M04",
+   "stage": "v2",
+   "category": "组合条件",
+   "question": "上个月miniapp渠道按支付时间算的订单数是多少",
+   "expected_status": "ok",
+   "expected_behavior": "按锚定日与演示库种子应得标准结果（参考SQL: SELECT COUNT(*) FROM orders WHERE status = 'paid' AND substr(paid_at,1,7)='2026-09' AND channel='miniapp'）",
+   "known_defect": null,
+   "injected": false,
+   "runs": [
+    {
+     "run": 1,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS order_count\nFROM orders\nWHERE channel = 'miniapp'\n  AND paid_at >= '2026-09-01' AND paid_at < '2026-10-01'\n  AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    },
+    {
+     "run": 2,
+     "status": "ok",
+     "sql": "SELECT COUNT(orders.id) AS order_count\nFROM orders\nWHERE orders.channel = 'miniapp'\n  AND orders.paid_at >= '2026-09-01' AND orders.paid_at < '2026-10-01'\n  AND orders.status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": false,
+      "actions": [
+       {
+        "type": "already_present",
+        "to": "status = 'paid'",
+        "detail": "已含 status = 'paid'，未改写"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "orders.paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "orders.paid_at >= '2026-09-01' AND orders.paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 orders.paid_at >= '2026-09-01' AND orders.paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    },
+    {
+     "run": 3,
+     "status": "ok",
+     "sql": "SELECT COUNT(*) AS order_count\nFROM orders\nWHERE (channel = 'miniapp'\n  AND paid_at >= '2026-09-01' AND paid_at < '2026-10-01') AND status = 'paid'",
+     "guard": {
+      "passed": true,
+      "violations": []
+     },
+     "enforcement": {
+      "metric": "订单数",
+      "required_filters": [
+       "status = 'paid'"
+      ],
+      "changed": true,
+      "actions": [
+       {
+        "type": "added",
+        "to": "status = 'paid'",
+        "detail": "缺少必需条件，系统补入 status = 'paid'"
+       }
+      ]
+     },
+     "time_fix": {
+      "changed": true,
+      "actions": [
+       {
+        "type": "boundary_rewritten",
+        "from": "paid_at BETWEEN '2026-09-01' AND '2026-09-30'",
+        "to": "paid_at >= '2026-09-01' AND paid_at < '2026-10-01'",
+        "detail": "paid_at 带时分，闭区间上界 '2026-09-30' 会漏掉当天 00:00 之后的数据，改写为 paid_at >= '2026-09-01' AND paid_at < '2026-10-01'（抽样 200 条 orders.paid_at 取值，带时分）"
+       }
+      ]
+     },
+     "error": null,
+     "retry": null,
+     "failures": [],
+     "refusal_accepted": false,
+     "passed_assertions": 4,
+     "skipped_checks": []
+    }
+   ],
+   "failures": [],
+   "decidable_runs": 3,
+   "passing_runs": 3,
+   "verdict": "pass"
+  }
+ ],
+ "failed_by_category": {},
+ "unreliable_passes": []
+}
