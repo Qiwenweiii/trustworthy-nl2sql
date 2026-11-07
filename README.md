@@ -6,7 +6,7 @@ v0 是给评测系统用的“靶子”，不是最终产品。链路只有一�
 自然语言问题 -> 语义层拒答检查（指标/维度存不存在）-> LLM 生成 SQL -> 语义层（指标必需条件强制注入 -> 时间边界校验）-> 静态安全校验 -> SQLite 只读执行 ->（执行报错时）报错回炉一次（把报错原文带回给模型修，修好的 SQL 重走全部安检）-> 输出结果
 ```
 
-不做：口径澄清、结果校验 / 证据组装、Web、多轮会话、trace 落盘。调用链细节只在 `--debug`（或 `ask(debug=True)`）下按「一步一行」打印到 stderr，见「debug 模式」；不写库、不写文件，关闭后无任何输出。
+不做（管线本体）：口径澄清、结果校验 / 证据组装、多轮会话、trace 落盘。调用链细节只在 `--debug`（或 `ask(debug=True)`）下按「一步一行」打印到 stderr，见「debug 模式」；不写库、不写文件，关闭后无任何输出。Web 演示壳是阶段 3 加的一层薄壳（见「Web 演示」一节），只调用 `pipeline.ask()`，不改链路。
 
 ## 快速开始
 
@@ -208,6 +208,8 @@ K1 第 3 次失败暴露的是另一侧：不是**时间字段选错**，是**DA
 pytest -q
 ```
 
+阶段 3 新增：`tests/test_web_api.py` 17 条 + `tests/test_web_smoke.py` 2 条覆盖薄壳契约（outcome 键集合与 `new_outcome` 逐字相同、结果帧逐字透传、阶段帧只带 `{name, elapsed_ms}`、参数白名单多余字段 422、并发闸门与日配额 429、`/api/meta` 与 `semantic_tables` 同源、示例问题取自 golden 文件且恰含 2 条拒答、未知异常只出固定文案不带堆栈）；`tests/test_pipeline_tracer.py` 7 条覆盖 `tracer` 入参（记录点与 debug 输出逐条一致、outcome 不因 tracer 改变、不带 tracer 行为不变）。前端拒答补全匹配规则不走 pytest，用 `node --experimental-strip-types frontend/scripts/test_refusal.mjs` 跑 8 条夹具断言（夹具是 R1/R2/R3 的真实拒答文案原文）。
+
 覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）、语义层订单范围注入（缺失补上 / 冲突改写 / 已写对不动 / 未匹配指标不注入，`tests/test_metrics.py` + pipeline 集成用例）、语义层时间边界校验（DATETIME 闭区间改半开区间且不改字段 / DATE 字段不动 / 上界已带时分不动 / 函数包裹与 `<` 不在射程 / 列找不到与库读不到只记 skipped 不抛错，`tests/test_time_boundary.py` + pipeline 集成用例）。语义层拒答（`tests/test_semantic_check.py` 直接读 `problems/eval_cases.json` 的 49 条非注入用例问题文本核对判定，另覆盖取值放行 / 时间残片放行 / 维度归属 / 登记表与表结构双向一致性；`tests/test_pipeline_refusal.py` 覆盖岔路：拒答时模型一次都不调、outcome 字段集合与旧契约完全一致、`injected_sql` 不拦、放行路径上注入与时间修正原位不变）是本次新增。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因；断言 `expect` 形状校验（状态词拼错、布尔/行数/规则列表/正则类型写错载入即报错，不再留到运行期静默判红），以及数值断言取第一个**数值**单元格（字符串维度列不干扰、合法的 0 不被跳过）。`tests/test_init_db.py` 把演示库钉成单测：按锚定日重建时月份窗口与行数对账、同种子两次构建逐行相等、K1 的五个九月期望值逐一核对。`tests/test_pipeline_retry.py` 覆盖阶段 1 报错回炉（回炉救回且只调两次 / 修复提示词带原问题+闯祸 SQL+报错原文 / 修好的 SQL 照样被 guard 拦下且数据未动 / 回炉后重过指标注入用的是原问题 / 修不好就认输不三顾 / 一次成功不多花调用 / 注入通道与 timeout 不回炉 / 模型拒绝修改与回炉调用挂掉都保持 exec_error 终态）。挂账豁免（`known_defect`）有 9 条判别性测试：`test_eval_judge.py` 5 条（v2 接受挂账 / v0、v1 拒挂 / 坏形状拒载 / 真实文件里只有 D15 挂着），`test_eval_report.py` 4 条（`--all` 豁免不置错 + 摘掉豁免键就置红的反向守卫 / `--stage` 模式不吃豁免 / `overview.exempted` 计数 / 报告渲染豁免账本四字段且 ❌ 保留）。
 
 ## 评测（阶段制）
@@ -240,6 +242,33 @@ python -m evaluation.run_eval --all
 - 退出码：**全量模式**只看 `meta.stages` 里 `status=done` 阶段的失败（done 现在是 v0 + v1 + v2，转状态只改用例文件，不改代码），且 `known_defect` 挂账豁免题的红不置错（报告照报）；**阶段模式**本阶段失败即 1，不看 done/pending、也不看豁免。1 = 有失败，2 = 存在不可判定用例或环境/配置不满足，0 = 干净。
 - 纯注入用例走 `load_config(require_llm=False)`，此时 `OPENAI_API_KEY` / `DATA_AGENT_MODEL` 可以为空，但不得拿去建 LLM 客户端。
 - `--today` 默认取用例文件里的 `meta.anchor_today`（`2026-10-30`），避免相对时间口径随运行日期漂移。
+
+## Web 演示（阶段 3）
+
+给管线套一层最小 HTTP 壳 + 问答前端，方案与裁决记录在 `docs/WEB_DEMO_PLAN.md`。壳只做四件事，全部不改管线链路：`POST /api/ask`（SSE 直播阶段进度，结果帧原样透传 12 键 outcome 契约）、`GET /api/meta`（指标/维度/示例问题，现读 `semantic_tables` 与 golden 用例文件，与评测同源）、`GET /api/health`（缺配置/缺库自检）、请求侧防线（参数白名单 `extra="forbid"`、并发闸门 2、日配额 300，拒答路径不占配额因为零模型调用）。
+
+```bash
+# 0. 装 web 依赖（可选依赖组，不动评测环境其余包）
+uv pip install -e ".[web]"
+
+# 1. 生成演示专用库（与评测用的 data/demo.db 隔离，同种子同数据）
+python scripts/init_db.py --db data/web_demo.db
+
+# 2. 起后端（终端 1）：DB 环境变量指到演示库，--factory 让 create_app 走默认装配
+DATA_AGENT_DB_PATH=data/web_demo.db uv run --no-sync uvicorn web.server.app:build_app --factory --port 8000
+
+# 3. 起前端（终端 2，需 Node ≥ 22；/api 由 vite proxy 转发到 :8000）
+cd frontend && npm install && npm run dev
+#    打开 http://localhost:5173
+```
+
+前端把管线已有的可信机制展示出来（这是和套壳 NL2SQL demo 拉开差距的地方）：
+
+- **等待体验三档**（`docs/WEB_DEMO_PLAN.md` §4.3）：拒答秒回（毫秒级、零模型调用）；正常档直播真实阶段名+耗时（数据来自 `ask(tracer=...)`，与 debug 输出同一批记录点，直播说的和最后证据面板记的账同源）；回炉档明示「首版 SQL 执行失败，已送回修复」。
+- **证据面板**：最终 SQL、系统改写（`enforcement`/`time_fix` 的 from→to 对照，`added` 列补写条件）、回炉现场（`retry` 的闯祸 SQL/报错原文/修复后三段）、口径声明；拒答卡标题按 status 区分（拦截现场 / 拒答现场未生成 SQL 未调模型）。
+- **拒答补全**：缺指标/缺维度取值/未登记限定词的拒答文案，在前端解析成补全 chips（取值按钮只给有 enum 的维度），点击回填输入框、可编辑再提交；匹配规则集中在 `frontend/src/refusal.ts`，夹具测试 `frontend/scripts/test_refusal.mjs`（`node --experimental-strip-types` 跑）盯文案漂移。
+
+明确不做：用户体系、会话持久化（聊天记录放浏览器内存，刷新即清）、多轮上下文、鉴权与部署上线、表单查询模式。
 
 ## NOTES
 
