@@ -356,7 +356,7 @@ overview
   cases           int    本批用例条数（含不可判定）
   pass / fail / environment  int
   exempted        int    失败里带 known_defect 挂账豁免的条数（仍计入 fail，只免 --all 退出码；
-                         0b6a472 之前的历史快照没有这个键，读到缺省即正常）
+                         394d673 之前的历史快照没有这个键，读到缺省即正常）
   unreliable_pass int    模型运气型不可靠通过条数（机制拒答不计入；单独计数，不影响 pass/fail 计数）
   verdict_values  list   本批实际出现过的结论取值（pass|fail|environment 的子集），排序后
 
