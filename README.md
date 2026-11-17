@@ -1,12 +1,91 @@
-# Data Agent v0
+# Data Agent —— 可信 NL2SQL 问数系统
 
-v0 是给评测系统用的“靶子”，不是最终产品。链路只有一条：
+业务方用自然语言问「上个月各渠道销售额是多少」，系统生成 SQL、只读执行、返回结果，并把「这个答案为什么可信」一起交出来。数据是求职/订单场景的演示库（customers + orders）。
+
+核心命题不是"让模型把 SQL 写对"，而是：**模型不可靠时，怎么用确定性代码兜住数据正确性**。
+
+## 当前状态
+
+| 维度 | 实况 |
+| --- | --- |
+| 用例账 | 57 条 = v0 只读防线 8 + v1 可信层 9 + v2 golden 40；三个阶段 `status=done`（全部毕业） |
+| v2 验收轮 | `--stage v2 --repeats 3` → **40/40 通过，样本级 120/120，零挂账豁免**（快照 `docs/eval_report_v2_stage4_accept.json`，2026-11-07） |
+| 单元测试 | **369 条 pytest 全绿**（全部不调模型）；前端拒答补全规则另有 8 条夹具断言（不走 pytest） |
+| 交付形态 | CLI 问数 + FastAPI 服务壳（SSE 直播阶段进度）+ React 问答前端（证据面板 / 拒答补全 chips） |
+| 已清偿挂账 | KD-001（口径条件被补进派生表外层导致执行报错）由阶段 4 块感知注入修复，用例级豁免块已删除；豁免机制保留备用 |
+
+## 它和"套壳 NL2SQL demo"的差别
+
+模型自己写 SQL 会出三类事故，每类对应一层独立防线：
+
+| 事故 | 防线 | 代码 | 触发后用户看到什么 |
+| --- | --- | --- | --- |
+| 写出危险语句（`DELETE`、`load_extension`、多语句） | **执行前安检** | `services/sql_guard.py` + `services/executor.py` | `status=blocked`，SQL 不碰数据库，逐条列出拦在哪条规则 |
+| 口径跑偏（该带 `status='paid'` 有时不带、DATETIME 闭区间漏掉最后一天） | **答后注入** | `services/metrics.py`、`services/time_boundary.py`、`services/sql_text.py` | 系统把条件补进/改写到正确位置，痕迹记进 `enforcement` / `time_fix`（`from`→`to` 可查） |
+| 指标或维度根本没定义，模型硬编（自己编一串城市名做 `CASE`、现造"新客"口径） | **答前拒答** | `services/semantic_check.py`（+ `graph/` 岔路） | `status=no_sql`、`error.type=semantic_refusal`，文案点名缺哪个词并列出能答的范围，**一次模型都不调** |
+
+再加两条：
+
+- **有界容错**：执行报数据库错误时，把失败 SQL 与报错原文带回给模型修一次（`retry_after_error`）；修坏不会问第三次，`injected_sql` 通道不回炉。
+- **全程留痕**：每一步往 `outcome` 字典记作业痕迹，这个字典就是评测契约（见「一次查询返回什么」）。可观测不是加日志，是把"这个条件是系统写的还是模型写的"变成可断言的字段。
+
+## 链路总览
 
 ```
 自然语言问题 -> 语义层拒答检查（指标/维度存不存在）-> LLM 生成 SQL -> 语义层（指标必需条件强制注入 -> 时间边界校验）-> 静态安全校验 -> SQLite 只读执行 ->（执行报错时）报错回炉一次（把报错原文带回给模型修，修好的 SQL 重走全部安检）-> 输出结果
 ```
 
+步骤与代码归属（函数级的输入/返回/报错见 `NOTES.md`）：
+
+| 步骤 | 入口 | 文件 |
+| --- | --- | --- |
+| 唯一入口 | `ask()` | `src/data_agent/pipeline.py` |
+| 七步各自实现 | `run_refusal_gate` / `resolve_sql` / `enforce_metrics` / `fix_time` / `run_guard` / `execute` / `retry_after_error` | `src/data_agent/pipeline_steps.py` |
+| 拒答判定本体 | `check_question()`（纯函数） | `src/data_agent/services/semantic_check.py` |
+| 拒答岔路编排 | `build_graph()`（LangGraph） | `src/data_agent/graph/` |
+| SQL 生成 | `build_generator()` | `src/data_agent/services/llm_client.py` |
+| 语义层登记表 | `METRICS` / `DIMENSIONS` | `src/data_agent/semantic_tables.py` |
+| 静态安检 | `guard_sql()` | `src/data_agent/services/sql_guard.py` |
+| 只读执行 | `execute_sql()` | `src/data_agent/services/executor.py` |
+| 前三步共用的 SQL 文本扫描 | `mask_sql` / `scan_views` / `split_query_blocks` | `src/data_agent/services/sql_text.py` |
+
 不做（管线本体）：口径澄清、结果校验 / 证据组装、多轮会话、trace 落盘。调用链细节只在 `--debug`（或 `ask(debug=True)`）下按「一步一行」打印到 stderr，见「debug 模式」；不写库、不写文件，关闭后无任何输出。Web 演示壳是阶段 3 加的一层薄壳（见「Web 演示」一节），只调用 `pipeline.ask()`，不改链路。
+
+## 项目结构
+
+```
+src/data_agent/       管线本体（唯一入口 pipeline.ask）
+  graph/              LangGraph 拒答岔路（只装这一个分支，其余是普通函数调用）
+  services/           llm_client / schema / metrics / time_boundary / sql_guard / sql_text / executor / semantic_check
+  semantic_tables.py  语义层登记表（指标 METRICS + 维度 DIMENSIONS）
+  pipeline_steps.py   七步各一步 + outcome 骨架
+web/                  FastAPI 服务壳（/api/ask SSE、/api/meta、/api/health）
+frontend/             React 19 + Vite 问答前端（证据面板、拒答补全 chips）
+evaluation/           评测 runner + judge（读用例、跑、判、聚合报告）
+problems/             eval_cases.json（57 条用例与期望值，即"账本"）
+scripts/init_db.py    演示库生成（固定种子，期望值可复算）
+tests/                369 条 pytest
+docs/                 需求、技术决策、评测设计、阶段方案、历次验收快照
+NOTES.md              接口地图：逐个函数的输入/返回/报错速查
+```
+
+技术栈：Python ≥3.11、openai SDK（OpenAI 兼容端点）、LangGraph（仅拒答岔路）、SQLite（只读执行）、FastAPI + SSE；前端 React 19 + Vite + TypeScript。依赖见 `pyproject.toml`（`dev` 组给 pytest，`web` 组给 FastAPI/uvicorn）。
+
+## 去哪找答案（文档索引）
+
+| 你想知道 | 看哪份 |
+| --- | --- |
+| `outcome` 每个字段的含义、`status` / `rule` / `error.type` 取值 | 本 README「一次查询返回什么」 |
+| 某个函数接受什么、返回什么、什么情况报什么错 | `NOTES.md`（业务模块）、`evaluation/NOTES.md`（评测层） |
+| 立项时产品最终要做成什么样 | `docs/REQUIREMENTS.md`（需求原文，保留不改） |
+| 技术选型为什么是这个、原方案与实际落地的偏差 | `docs/TECH_DECISIONS.md` §四 |
+| 评测四个维度哪些按原样做了、哪些换了做法、哪些没做 | `docs/EVAL_DESIGN.md` §5 |
+| 现在到底测了哪 57 条、每条期望值是多少 | `problems/eval_cases.json` |
+| Web 壳与前端的方案与裁决点 | `docs/WEB_DEMO_PLAN.md` |
+| 阶段 4（块感知注入修复 KD-001）的立项证据与收口账 | `docs/STAGE4_AST_PLAN.md` |
+| 历次验收的真实结果 | `docs/eval_report_*.json`（每份的 `run_context` 写明跑的口径） |
+
+> 各阶段方案/评测文档里出现的「复盘 00X」指本地留存的过程档案，不随仓库分发。本仓库的可核验证据一律是 `docs/eval_report_*.json` 快照 + 对应 git 提交 + 可复跑的测试与评测命令，三者能独立得出同样结论。
 
 ## 快速开始
 
@@ -33,7 +112,9 @@ python -m data_agent.cli "上个月销售额是多少" --json
 python -m data_agent.cli "上个月销售额是多少" --debug
 ```
 
-配置来源：项目根目录 `.env`（python-dotenv 加载，系统环境变量优先）。可配置项见 `.env.example`：`OPENAI_API_KEY`、`DATA_AGENT_MODEL`、`OPENAI_BASE_URL`、`DATA_AGENT_DB_PATH`（默认 `data/demo.db`）、`DATA_AGENT_MAX_ROWS`（默认 200）、`DATA_AGENT_QUERY_TIMEOUT`（默认 5 秒）。
+配置来源：项目根目录 `.env`（python-dotenv 加载，系统环境变量优先）。可配置项见 `.env.example`：`OPENAI_API_KEY`、`DATA_AGENT_MODEL`、`OPENAI_BASE_URL`、`DATA_AGENT_DB_PATH`（默认 `data/demo.db`）、`DATA_AGENT_MAX_ROWS`（默认 200）、`DATA_AGENT_QUERY_TIMEOUT`（默认 5 秒）。`.env` 与 `data/*.db` 都不入库（见 `.gitignore`），克隆后按上面两步自行生成。
+
+跑测试见「测试」，跑评测见「评测（阶段制）」，起 Web 演示见「Web 演示（阶段 3）」。
 
 ## 一次查询返回什么（评测契约）
 
@@ -180,6 +261,7 @@ K1 的病根是"订单范围靠模型自觉"不可靠：同一个问题有时写
 
 - 指标登记在 `semantic_tables.py` 的 `METRICS` 表（现有**销售额**、**订单数**两条），每条记录名称、同义词、必需过滤条件（订单范围 `status = 'paid'`）、时间字段与口径公式；消费方是 `services/metrics.py`（强制注入逻辑）。**时间字段和公式只登记、不校验**；时间边界写法由下面第二步的 `time_boundary` 负责，口径公式仍未校验。
 - SQL 生成之后、静态校验与执行之前，`enforce_metric_filters(question, sql)` 按问题匹配指标，把必需条件强制落到 SQL 上：缺失就补进 WHERE（原条件整体加括号再 AND，没有 WHERE 就插在 GROUP BY / ORDER BY / LIMIT 之前）；模型写了冲突取值（如 `status='refunded'`、`status IN ('paid','refunded')`）以指标定义为准改写。
+- **块感知（阶段 4，KD-001 的修复）**：`sql_text.split_query_blocks()` 先在掩码文本上按括号配对把 SQL 切成查询块（顶层 / 派生表 / CTE 支 / `IN` 子查询各一块，函数调用的括号穿透），"必需条件是否已存在"与"补到哪一层"**只在直接引用了指标表的那个块里判**。模型把 `status = 'paid'` 写到看不见 `orders` 表的派生表外层时，条件补进内层块、不会因为外层那句复读而判成"已经写过"；补进非顶层块时 `detail` 会写明落点。块归属判不准（多块歧义、括号不配对）就不动 SQL，记 `skipped` 加原因——判读不懂时宁可不动，不猜。
 - 线性管道，没有分支：所有 SQL（含 `injected_sql`）都过这道检查，改写后再进 guard。
 - 痕迹记在 `outcome.enforcement`：`changed=true` 说明送去执行的 SQL 被系统补过/改过，`actions[]` 里能看到每一条动了什么、从什么改到什么；评测与调试据此分辨条件是谁写进去的。
 
@@ -208,13 +290,15 @@ K1 第 3 次失败暴露的是另一侧：不是**时间字段选错**，是**DA
 pytest -q
 ```
 
+369 条，全部不调模型（LLM 用假生成器，语义层用真实登记表与真实演示库）。写测试的口径是**判别性**：先在修复前的实现上跑红、复原后再跑绿，不写"永远绿"的测试。
+
 阶段 3 新增：`tests/test_web_api.py` 17 条 + `tests/test_web_smoke.py` 2 条覆盖薄壳契约（outcome 键集合与 `new_outcome` 逐字相同、结果帧逐字透传、阶段帧只带 `{name, elapsed_ms}`、参数白名单多余字段 422、并发闸门与日配额 429、`/api/meta` 与 `semantic_tables` 同源、示例问题取自 golden 文件且恰含 2 条拒答、未知异常只出固定文案不带堆栈）；`tests/test_pipeline_tracer.py` 7 条覆盖 `tracer` 入参（记录点与 debug 输出逐条一致、outcome 不因 tracer 改变、不带 tracer 行为不变）。前端拒答补全匹配规则不走 pytest，用 `node --experimental-strip-types frontend/scripts/test_refusal.mjs` 跑 8 条夹具断言（夹具是 R1/R2/R3 的真实拒答文案原文）。
 
 覆盖：校验规则（含危险函数、多语句、字符串误杀）、只读防线（authorizer + URI）、行数截断、超时中断、pipeline 各状态分支（含 `today` 透传与 `injected_sql` 注入路径）、语义层订单范围注入（缺失补上 / 冲突改写 / 已写对不动 / 未匹配指标不注入，`tests/test_metrics.py` + pipeline 集成用例）、语义层时间边界校验（DATETIME 闭区间改半开区间且不改字段 / DATE 字段不动 / 上界已带时分不动 / 函数包裹与 `<` 不在射程 / 列找不到与库读不到只记 skipped 不抛错，`tests/test_time_boundary.py` + pipeline 集成用例）。语义层拒答（`tests/test_semantic_check.py` 直接读 `problems/eval_cases.json` 的 49 条非注入用例问题文本核对判定，另覆盖取值放行 / 时间残片放行 / 维度归属 / 登记表与表结构双向一致性；`tests/test_pipeline_refusal.py` 覆盖岔路：拒答时模型一次都不调、outcome 字段集合与旧契约完全一致、`injected_sql` 不拦、放行路径上注入与时间修正原位不变）是本次新增。其中 `test_dangerous_function_sql_is_blocked` 就是评测的第一条用例：伪造模型输出 `SELECT load_extension(...)`，断言被拦、数据未变。`tests/test_eval_judge.py` 覆盖评测器本身：同一批用例，修复后的 outcome 必须判通过、当前 v0 的 outcome 必须判失败并给出根因；断言 `expect` 形状校验（状态词拼错、布尔/行数/规则列表/正则类型写错载入即报错，不再留到运行期静默判红），以及数值断言取第一个**数值**单元格（字符串维度列不干扰、合法的 0 不被跳过）。`tests/test_init_db.py` 把演示库钉成单测：按锚定日重建时月份窗口与行数对账、同种子两次构建逐行相等、K1 的五个九月期望值逐一核对。`tests/test_pipeline_retry.py` 覆盖阶段 1 报错回炉（回炉救回且只调两次 / 修复提示词带原问题+闯祸 SQL+报错原文 / 修好的 SQL 照样被 guard 拦下且数据未动 / 回炉后重过指标注入用的是原问题 / 修不好就认输不三顾 / 一次成功不多花调用 / 注入通道与 timeout 不回炉 / 模型拒绝修改与回炉调用挂掉都保持 exec_error 终态）与阶段 4 的 KD-001 端到端复刻（删除式修复后注入补进内层块转绿）。块感知注入本体在 `tests/test_sql_text_blocks.py`（切查询块 8 条）与 `tests/test_metrics_blocks.py`（派生表/CTE/多块歧义/括号残片 8 条）。挂账豁免（`known_defect`）有 9 条判别性测试：`test_eval_judge.py` 5 条（v2 接受挂账 / v0、v1 拒挂 / 坏形状拒载 / 实况账：阶段 4 销账后全文件零挂账），`test_eval_report.py` 4 条（`--all` 豁免不置错 + 摘掉豁免键就置红的反向守卫 / `--stage` 模式不吃豁免 / `overview.exempted` 计数 / 报告渲染豁免账本四字段且 ❌ 保留）。
 
 ## 评测（阶段制）
 
-用例按阶段划分（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（8 条纯注入：S1/S2 + 攻击面 A1–A6，不调模型，缺 key 也能跑），v1 = 可信层（口径 / 空结果 / 拒答共 9 条，需真模型），v2 = 基线层（golden set 40 条真实分布问题 + 锚定种子标准结果，**status=done**：2026-11-06 毕业——旧代码基线 37/40（`docs/eval_report_v2_baseline.json` EX 38/40=95.0% 为首快照），城市取值登记进 `DIMENSIONS` 后毕业两轮 `--stage v2 --repeats 3` 各 39/40（`docs/eval_report_v2_round1_r3.json` / `eval_report_v2_round2_r3.json`，样本级 119/120=99.2%），两轮唯一红都是 D15 且同根因，走用例级 `known_defect` 挂账豁免（KD-001，修复归属阶段 4 AST 条件定位改写；红照报、只免 `--all` 退出码，解除条件见 `evaluation/NOTES.md` §4.7），翻转自证后转 done——此后 v2 失败视为回归、进 `--all` 退出码门禁（挂账豁免题除外）。2026-11-07 阶段 4 块感知注入落地后验收轮 `--stage v2 --repeats 3` **40/40** 全绿（样本级 120/120，快照 `docs/eval_report_v2_stage4_accept.json`），KD-001 挂账块按释放条件删除、D15 恢复普通门禁用例——**当前零挂账豁免**，豁免机制保留备用。毕业标准与执行账见 `docs/EVAL_DESIGN.md` §3，阶段 4 账见 `docs/STAGE4_AST_PLAN.md` 与复盘 005。**v0、v1 已承诺（done）**，v1 于 2026-11-04 转 done——此后 v1 用例失败视为回归。运行必须显式二选一（不给默认值，防止手滑全量烧掉模型调用）：
+用例按阶段划分（`meta.stages` + 每条用例的 `stage`）：v0 = 只读防线（8 条纯注入：S1/S2 + 攻击面 A1–A6，不调模型，缺 key 也能跑），v1 = 可信层（口径 / 空结果 / 拒答共 9 条，需真模型），v2 = 基线层（golden set 40 条真实分布问题 + 锚定种子标准结果，**status=done**：2026-11-06 毕业——旧代码基线 37/40（`docs/eval_report_v2_baseline.json` EX 38/40=95.0% 为首快照），城市取值登记进 `DIMENSIONS` 后毕业两轮 `--stage v2 --repeats 3` 各 39/40（`docs/eval_report_v2_round1_r3.json` / `eval_report_v2_round2_r3.json`，样本级 119/120=99.2%），两轮唯一红都是 D15 且同根因，走用例级 `known_defect` 挂账豁免（KD-001，修复归属阶段 4 块感知注入（立项时代号「AST 条件定位改写」，落地为自研查询块切分，未引入 AST 库）；红照报、只免 `--all` 退出码，解除条件见 `evaluation/NOTES.md` §4.7），翻转自证后转 done——此后 v2 失败视为回归、进 `--all` 退出码门禁（挂账豁免题除外）。2026-11-07 阶段 4 块感知注入落地后验收轮 `--stage v2 --repeats 3` **40/40** 全绿（样本级 120/120，快照 `docs/eval_report_v2_stage4_accept.json`），KD-001 挂账块按释放条件删除、D15 恢复普通门禁用例——**当前零挂账豁免**，豁免机制保留备用。毕业标准与执行账见 `docs/EVAL_DESIGN.md` §3，阶段 4 账见 `docs/STAGE4_AST_PLAN.md`。**v0、v1 已承诺（done）**，v1 于 2026-11-04 转 done——此后 v1 用例失败视为回归。运行必须显式二选一（不给默认值，防止手滑全量烧掉模型调用）：
 
 ```bash
 # 日常：只跑当前阶段（v0 的 8 条注入用例，不调 LLM）
@@ -270,7 +354,7 @@ cd frontend && npm install && npm run dev
 
 明确不做：用户体系、会话持久化（聊天记录放浏览器内存，刷新即清）、多轮上下文、鉴权与部署上线、表单查询模式。
 
-## NOTES
+## 规格偏差与期望值锚定
 
 - S2 暴露 README 与实现的规格偏差，已修正：README 原写“禁用关键字包含 `REPLACE`”，实现按裸词匹配把只读函数 `replace()` 一起误杀。规格已改为“禁用写语句关键字（`REPLACE INTO` 等），函数名如 `replace()` 不在此列”。
 - S1 是同一处的另一侧偏差：`SELECT "load_extension"(...)` 靠“双引号标识符豁免”躲过了 `forbidden_function`。规格已明确该豁免只适用于关键字匹配，被引号包裹的函数名后紧跟左括号仍算函数调用。
@@ -279,10 +363,12 @@ cd frontend && npm install && npm run dev
 - 用例的数据库前提（`requires_data_months` / `forbids_data_months`）由 runner 读演示库实际月份校验，不在代码里硬编码数据窗口，以后改 `init_db.py` 的时间范围不会引起误报。
 - **立项时的技术决策与当前实现有系统性偏差**，对照表在 `docs/TECH_DECISIONS.md` §四（DuckDB→SQLite、FastAPI+SSE→CLI、LiteLLM→openai SDK、trace/JSONL 与澄清未做、LangGraph 只装拒答一个岔路）。想按原方案补 Web 层或 trace，那节仍是有约束力的依据；只想改现有链路，以本 README 与 `NOTES.md` 为准。评测设计的收口实况与缺口清单见 `docs/EVAL_DESIGN.md` §5。
 
-## v0 已知边界
+## 已知边界
+
+以下多数是有意的取舍，不是漏做——每条都写清了"做到哪一层、还差哪一层"。
 
 - 口径只做声明、不做澄清：提示词要求模型在 SQL 代码块之外再输出一行口径声明（金额口径 / 时间口径 / 订单范围），落在 `caliber_note`；用户没说清时不反问，按默认（`SUM(orders.amount)`，含税）出数，但默认必须写进声明。**订单范围已不再靠模型自觉**——指标定义会强制注入/改写 `status = 'paid'`（见「语义层」一节）；**时间边界的写法也不再靠模型自觉**——DATETIME 字段的闭区间上界会被系统改成半开区间（见「语义层」一节）。仍没有校验的是：金额口径（含税/不含税公式是否真按声明逐行扣减）、时间**字段**选得对不对（该按 `paid_at` 却写了 `order_date`）、以及"声明与 SQL 是否真的相符"。**这三条要区分两层**：评测层已对前两类写了断言（K1/K3 用 `sql_matches` 要求出现 `amount - COALESCE(tax_amount, 0)` 这类逐行扣减写法、用 `sql_not_matches` 禁止 `SUM(amount) - SUM(tax_amount)` 这种整体相减），所以**错了会在报告里红**；但**运行层不挡不改**，`METRICS` 里的 `formula` / `time_field` 只登记不执行——也就是说这类错误能被发现，不能在用户面前被拦住。
 - 结果校验只做空结果标记：0 行或全 NULL 会标 `result.empty_result` 并在输出说「当前条件下没有数据」；负值、异常量级、NULL 比例等仍不告警。
 - 语义拒答靠**确定性别名匹配**（`TECH_DECISIONS` 决策 6：不做模糊匹配、不做向量检索），所以它对称不对称很敏感：同义词表里没写的说法会被当成缺口拒答（例如「一共有多少订单」这种没登记成"订单数"同义词的口语），换来的是"宁可拒答也不硬编"。被拒时文案会列出当前支持的指标与维度，照着改问法就能过。
 - 拒答只判**指标/维度存不存在**，不判维度取值合不合法：「抖音渠道」照样送去生成 SQL，靠空结果标记说破"没数据"。取值枚举校验是下一步的能力。
-- SQL 生成质量取决于模型，v0 不保证准确率。
+- SQL 生成质量取决于模型，本项目不保证准确率；保证的是"错得可查"——系统每一次改动、每一条拦截与拒答都留在 `outcome` 里，并能在评测报告与单测里复算。

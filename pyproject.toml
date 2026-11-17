@@ -1,7 +1,7 @@
 [project]
 name = "data-agent"
 version = "0.1.0"
-description = "v0 data agent: question -> SQL -> guarded read-only execution -> result"
+description = "可信 NL2SQL 问数系统：问题 -> 语义层防线 -> 只读执行 -> 带痕迹的结果"
 requires-python = ">=3.11"
 dependencies = [
     "openai>=1.40",

@@ -832,7 +832,7 @@ def test_real_file_has_no_exempted_cases() -> None:
     """实况账（阶段 4 销账后，2026-11-07）：KD-001 已清偿，全文件零挂账豁免。
 
     挂账豁免机制本身保留（合成用例覆盖 v2 接受挂账 / v0、v1 拒挂 / 坏形状拒载）；
-    历史账见 docs/RETROSPECTIVE.md 复盘 003/005 与快照 docs/eval_report_v2_round*_r3.json。
+    历史账见快照 docs/eval_report_v2_round1_r3.json / eval_report_v2_round2_r3.json 与 docs/EVAL_DESIGN.md。
     """
     _, cases = judge.load_cases(CASES_PATH)
     assert [case for case in cases if case.get("known_defect")] == []

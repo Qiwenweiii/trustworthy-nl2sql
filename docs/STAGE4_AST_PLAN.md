@@ -1,7 +1,9 @@
 # 阶段 4 工程方案 —— AST 条件定位改写（KD-001 清偿）
 
-> 状态：**已落地收口（2026-11-07）**。M1 块感知注入（`858c5bb`）→ M2 小采样 3 次命中派生表现场 → M3 验收轮 40/40（样本级 120/120、exempted=0）后 KD-001 销账（`18de4da`：用例账删挂账、快照 `docs/eval_report_v2_stage4_accept.json` 入库）；调用账 123 ≤ 130，四裁决点全部兑现，复盘见 RETROSPECTIVE 005。原立项证据：复盘 003 §1/§3、复盘 004 §4；解除条件（D15 验收 3/3）已由数据达成。
+> 状态：**已落地收口（2026-11-07）**。M1 块感知注入（`858c5bb`）→ M2 小采样 3 次命中派生表现场 → M3 验收轮 40/40（样本级 120/120、exempted=0）后 KD-001 销账（`18de4da`：用例账删挂账、快照 `docs/eval_report_v2_stage4_accept.json` 入库）；调用账 123 ≤ 130，四裁决点全部兑现。原立项证据：D15 两轮各红 2/3 的现场（快照 `docs/eval_report_v2_round1_r3.json` / `eval_report_v2_round2_r3.json`）；解除条件（D15 验收 3/3）已由数据达成。
 > 本方案的原则和前面几期一样：**先定契约，再动代码；只动病灶，不顺手装修**。
+>
+> 文中「复盘 00X」是各阶段收口时的过程档案（本地留存，不随仓库分发）。本文的可核验证据一律是 `docs/eval_report_*.json` 快照与对应 git 提交，两者能独立复现同样的结论。
 
 ## 1. 问题是什么（一句话版）
 
@@ -112,7 +114,7 @@ ORDER BY cnt DESC LIMIT 1
 | M0 | 本方案稿四裁决点拍板 | `docs/STAGE4_AST_PLAN.md` | 提交 + 裁决记录 |
 | M1 | 切块函数 + metrics 改造 + §6 全部单测 | `services/sql_text.py`、`services/metrics.py`、`tests/test_metrics*.py`、`tests/test_pipeline_retry.py` | 先红后绿记录 + 全量 passed |
 | M2 | 小采样 D15 现场核对 | 无代码改动 | `runs[].retry`/enforcement 现场贴台账 |
-| M3 | 验收轮 + KD-001 销账 + 文档同步 | `problems/eval_cases.json`（删块）、README、NOTES、`evaluation/NOTES.md`、`docs/EVAL_DESIGN.md`、快照 `docs/eval_report_*.json`、`docs/RETROSPECTIVE.md` 复盘 005 | 40/40×repeats 3 快照 + 销账提交 |
+| M3 | 验收轮 + KD-001 销账 + 文档同步 | `problems/eval_cases.json`（删块）、README、NOTES、`evaluation/NOTES.md`、`docs/EVAL_DESIGN.md`、快照 `docs/eval_report_*.json` | 40/40×repeats 3 快照 + 销账提交 |
 
 风险与对策：切块误判括号形态（函数括号 vs 子查询括号）→ 认"括号后紧跟 FROM/SELECT 语境"，判不准就 skip（失败姿态无害）；temperature=0 锁不住 schema 变化引起的形态漂移（复盘 004 §2 教训）→ 验收以当轮现场为准，不为凑绿改用例；D15 验收轮仍可能红（模型这次不写派生表）→ 红照报、按 release_condition 等下一轮，不做无界重跑。
 
